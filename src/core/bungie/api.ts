@@ -5,7 +5,6 @@ import {
   BUNGIE_PLATFORM,
   MANIFEST_PATH,
   SET_LOCK_STATE_PATH,
-  USER_GET_CURRENT,
   USER_GET_MEMBERSHIPS,
   profilePath,
   type ProfileComponent,
@@ -15,7 +14,6 @@ import {
   BungieApiError,
   BungieAuthError,
   BungieNetworkError,
-  type BungieNetUser,
   type BungieServerResponse,
   type DestinyManifestInfo,
   type DestinyProfileResponse,
@@ -116,10 +114,6 @@ export async function bungieRequest<T>(
 
     return parsed.Response;
   }
-}
-
-export async function getCurrentUser(): Promise<BungieNetUser> {
-  return bungieRequest<BungieNetUser>('GET', USER_GET_CURRENT);
 }
 
 export async function getMembershipsForCurrentUser(): Promise<UserMembershipData> {

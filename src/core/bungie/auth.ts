@@ -36,7 +36,11 @@ export function getAuthState(): AuthState {
 export function isLoggedIn(): boolean {
   const tokens = loadTokens();
   if (!tokens) return false;
-  return tokens.refreshTokenExpiresAt > Date.now();
+  // Confidential clients have a refresh token whose expiry bounds the session
+  // (~90 days). Public clients only have an access token (~1 hour) and the
+  // user has to re-sign-in when it expires.
+  const sessionExpiresAt = tokens.refreshTokenExpiresAt ?? tokens.accessTokenExpiresAt;
+  return sessionExpiresAt > Date.now();
 }
 
 function basicAuthHeader(): string | null {
@@ -55,13 +59,16 @@ function randomState(): string {
 
 function tokensFromResponse(resp: OAuthTokenResponse): StoredTokens {
   const now = Date.now();
-  return {
+  const tokens: StoredTokens = {
     accessToken: resp.access_token,
-    refreshToken: resp.refresh_token,
     accessTokenExpiresAt: now + resp.expires_in * 1000,
-    refreshTokenExpiresAt: now + resp.refresh_expires_in * 1000,
     bungieMembershipId: resp.membership_id,
   };
+  if (resp.refresh_token && typeof resp.refresh_expires_in === 'number') {
+    tokens.refreshToken = resp.refresh_token;
+    tokens.refreshTokenExpiresAt = now + resp.refresh_expires_in * 1000;
+  }
+  return tokens;
 }
 
 async function requestToken(formBody: string): Promise<OAuthTokenResponse> {
@@ -152,6 +159,11 @@ export async function refreshTokens(): Promise<StoredTokens | null> {
   refreshInFlight = (async () => {
     const current = loadTokens();
     if (!current) return null;
+    // Public clients have no refresh token — there's nothing to refresh, and
+    // the caller will get null and have to prompt the user to re-sign-in.
+    if (!current.refreshToken || current.refreshTokenExpiresAt === undefined) {
+      return null;
+    }
     if (current.refreshTokenExpiresAt <= Date.now()) {
       await logout();
       return null;

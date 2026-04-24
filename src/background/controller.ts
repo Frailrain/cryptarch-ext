@@ -12,10 +12,7 @@
 
 import { ensureLoaded, getItem, setItem } from '@/adapters/storage';
 import { log, logJson, error as logError } from '@/adapters/logger';
-import {
-  getCurrentUser,
-  getMembershipsForCurrentUser,
-} from '@/core/bungie/api';
+import { getMembershipsForCurrentUser } from '@/core/bungie/api';
 import {
   isLoggedIn,
   startLoginFlow,
@@ -51,32 +48,43 @@ export async function handleSignIn(): Promise<void> {
   await startLoginFlow();
   log('auth', 'tokens saved, fetching memberships');
 
-  const user = await getCurrentUser();
+  // GetMembershipsForCurrentUser returns destinyMemberships AND bungieNetUser
+  // in one call — no need for the deprecated GetCurrentBungieUser endpoint.
+  const memberships = await getMembershipsForCurrentUser();
+
+  const bungieUser = memberships.bungieNetUser;
   saveBungieUser({
-    bungieGlobalDisplayName: user.bungieGlobalDisplayName ?? null,
-    bungieGlobalDisplayNameCode: user.bungieGlobalDisplayNameCode ?? null,
-    uniqueName: user.uniqueName ?? null,
+    bungieGlobalDisplayName: bungieUser?.bungieGlobalDisplayName ?? null,
+    bungieGlobalDisplayNameCode: bungieUser?.bungieGlobalDisplayNameCode ?? null,
+    uniqueName: bungieUser?.uniqueName ?? null,
   });
 
-  const memberships = await getMembershipsForCurrentUser();
   const destinyMemberships = memberships.destinyMemberships ?? [];
   if (destinyMemberships.length === 0) {
     throw new Error('No Destiny memberships found for this Bungie account');
   }
 
-  // Prefer the primaryMembershipId if Bungie tells us one; otherwise take the
-  // first Destiny membership. (Cross-save profiles also behave correctly with
-  // this rule since Bungie points primary to the cross-save host.)
-  const preferred =
-    destinyMemberships.find((m) => m.membershipId === memberships.primaryMembershipId) ??
+  // Selection priority (matches the Overwolf controller):
+  //   1. Cross-save host: a membership where crossSaveOverride === membershipType.
+  //      For cross-save accounts this is the canonical platform Bungie expects
+  //      profile queries to target.
+  //   2. primaryMembershipId, if Bungie set one.
+  //   3. First entry in destinyMemberships as a last resort.
+  const chosen =
+    destinyMemberships.find(
+      (m) => m.crossSaveOverride !== 0 && m.membershipType === m.crossSaveOverride,
+    ) ??
+    (memberships.primaryMembershipId
+      ? destinyMemberships.find((m) => m.membershipId === memberships.primaryMembershipId)
+      : undefined) ??
     destinyMemberships[0];
 
   const primary: DestinyMembership = {
-    membershipType: preferred.membershipType,
-    membershipId: preferred.membershipId,
-    displayName: preferred.displayName,
-    iconPath: preferred.iconPath ?? null,
-    crossSaveOverride: preferred.crossSaveOverride,
+    membershipType: chosen.membershipType,
+    membershipId: chosen.membershipId,
+    displayName: chosen.displayName,
+    iconPath: chosen.iconPath ?? null,
+    crossSaveOverride: chosen.crossSaveOverride,
   };
   savePrimaryMembership(primary);
   log('auth', 'sign-in complete', primary.displayName);

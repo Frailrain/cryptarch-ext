@@ -11,9 +11,11 @@ export interface OAuthTokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
-  refresh_token: string;
-  refresh_expires_in: number;
   membership_id: string;
+  // Only returned for confidential OAuth clients (those with a client secret).
+  // Public clients receive an access token only.
+  refresh_token?: string;
+  refresh_expires_in?: number;
 }
 
 export interface BungieNetUser {

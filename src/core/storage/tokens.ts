@@ -2,10 +2,13 @@ import { getItem, removeItem, setItem } from '@/adapters/storage';
 
 export interface StoredTokens {
   accessToken: string;
-  refreshToken: string;
   accessTokenExpiresAt: number;
-  refreshTokenExpiresAt: number;
   bungieMembershipId: string;
+  // Public OAuth clients on Bungie (no client secret) do NOT receive refresh
+  // tokens — these fields are only present for confidential clients. When
+  // missing, the session ends when the access token expires (~1 hour).
+  refreshToken?: string;
+  refreshTokenExpiresAt?: number;
 }
 
 export interface DestinyMembership {

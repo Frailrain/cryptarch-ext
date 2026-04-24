@@ -4,7 +4,6 @@ export const BUNGIE_PLATFORM = `${BUNGIE_ORIGIN}/Platform`;
 export const OAUTH_AUTHORIZE_URL = `${BUNGIE_ORIGIN}/en/OAuth/Authorize`;
 export const OAUTH_TOKEN_URL = `${BUNGIE_PLATFORM}/App/OAuth/Token/`;
 
-export const USER_GET_CURRENT = `/User/GetCurrentBungieUser/`;
 export const USER_GET_MEMBERSHIPS = `/User/GetMembershipsForCurrentUser/`;
 
 export function profilePath(membershipType: number, membershipId: string): string {

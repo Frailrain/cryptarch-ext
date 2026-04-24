@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { loadFeed } from '@/core/storage/drop-feed';
-import { loadPrimaryMembership, loadTokens } from '@/core/storage/tokens';
+import { isLoggedIn } from '@/core/bungie/auth';
+import { loadPrimaryMembership } from '@/core/storage/tokens';
 import { onKeyChanged } from '@/adapters/storage';
 import { send } from '@/shared/messaging';
 import type { DropFeedEntry } from '@/shared/types';
 import { DropLogPanel, type DropTypeFilter, type DropMatchFilter } from './tabs/DropLogPanel';
 
 export function Settings() {
-  const [signedIn, setSignedIn] = useState<boolean>(() => {
-    const tokens = loadTokens();
-    return !!tokens && tokens.refreshTokenExpiresAt > Date.now();
-  });
+  const [signedIn, setSignedIn] = useState<boolean>(() => isLoggedIn());
   const [displayName, setDisplayName] = useState<string | null>(
     () => loadPrimaryMembership()?.displayName ?? null,
   );
