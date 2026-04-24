@@ -22,6 +22,13 @@ export interface DestinyMembership {
 const TOKENS_KEY = 'auth.tokens';
 const MEMBERSHIP_KEY = 'auth.primaryMembership';
 const BUNGIE_USER_KEY = 'auth.bungieUser';
+const AUTH_STATE_KEY = 'auth.state';
+
+// 'expired' is distinct from 'signed-out': the user explicitly signed in but
+// the session lapsed (typically a ~1hr access-token expiry on a public client
+// with no refresh token). The options page renders a re-auth banner only on
+// 'expired', not on 'signed-out'.
+export type AuthState = 'signed-in' | 'expired' | 'signed-out';
 
 export interface CachedBungieUser {
   bungieGlobalDisplayName: string | null;
@@ -63,4 +70,12 @@ export function saveBungieUser(u: CachedBungieUser): void {
 
 export function clearBungieUser(): void {
   removeItem(BUNGIE_USER_KEY);
+}
+
+export function loadAuthState(): AuthState {
+  return getItem<AuthState>(AUTH_STATE_KEY) ?? 'signed-out';
+}
+
+export function saveAuthState(state: AuthState): void {
+  setItem(AUTH_STATE_KEY, state);
 }

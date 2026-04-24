@@ -145,8 +145,19 @@ export async function setLockState(
   locked: boolean,
 ): Promise<SetLockStateOutcome> {
   const body: SetLockStateBody = { state: locked, itemId, characterId, membershipType };
-  const result = await bungieRequest<number>('POST', SET_LOCK_STATE_PATH, { body });
-  return result === 1 ? 'changed' : 'no-op';
+  try {
+    const result = await bungieRequest<number>('POST', SET_LOCK_STATE_PATH, { body });
+    return result === 1 ? 'changed' : 'no-op';
+  } catch (err) {
+    // Brief 4.3 recon: some successful SetLockState calls come back with
+    // ErrorCode 0 instead of 1 (typically when the item was already in the
+    // requested state). Treat either as success; only other error codes
+    // bubble up.
+    if (err instanceof BungieApiError && err.errorCode === 0) {
+      return 'no-op';
+    }
+    throw err;
+  }
 }
 
 export async function fetchManifestComponent<T>(relativePath: string): Promise<T> {

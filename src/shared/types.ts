@@ -35,11 +35,23 @@ export interface DropFeedEntry {
   armorTier: 4 | 5 | null;
   // Future-proofing for Session 3's exotic treatment.
   isExotic: boolean;
+  // Persisted for cross-cycle autolock retries. SetLockState needs the owning
+  // character; membershipType comes from the stored primary membership.
+  characterId?: string;
+  // Number of autolock attempts made so far (including the first). Capped at
+  // 3 — beyond that we broadcast autolock-failed and stop retrying.
+  retryCycleCount?: number;
 }
 
 export interface DropLockUpdatedPayload {
   instanceId: string;
   locked: boolean;
+}
+
+export interface AutolockFailedPayload {
+  itemName: string;
+  instanceId: string;
+  at: number;
 }
 
 export interface ArmorTaxonomyPayload {

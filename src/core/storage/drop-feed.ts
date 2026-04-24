@@ -51,3 +51,12 @@ export function updateFeedLock(instanceId: string, locked: boolean): boolean {
   writeAll(all);
   return true;
 }
+
+export function updateFeedRetryCount(instanceId: string, count: number): boolean {
+  const all = readAll();
+  const idx = all.findIndex((e) => e.instanceId === instanceId);
+  if (idx === -1) return false;
+  all[idx] = { ...all[idx], retryCycleCount: count };
+  writeAll(all);
+  return true;
+}

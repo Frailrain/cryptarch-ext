@@ -12,9 +12,12 @@
 import { POLL_ALARM_NAME, POLL_PERIOD_MINUTES } from '@/shared/constants';
 import { log, error as logError } from '@/adapters/logger';
 import {
+  handleGetArmorTaxonomy,
   handlePollAlarm,
+  handleRetryManifest,
   handleSignIn,
   handleSignOut,
+  kickoffManifestLoad,
 } from './controller';
 import type { Message } from '@/shared/messaging';
 
@@ -34,11 +37,16 @@ async function ensurePollAlarm(): Promise<void> {
 chrome.runtime.onInstalled.addListener((details) => {
   log('sw', 'onInstalled', details.reason);
   void ensurePollAlarm();
+  // Kick off manifest download proactively so the options page can clear its
+  // first-boot loading card without waiting for the user to sign in or for
+  // the first drop to trigger a lazy fetch.
+  void kickoffManifestLoad();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   log('sw', 'onStartup');
   void ensurePollAlarm();
+  void kickoffManifestLoad();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -78,6 +86,16 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         await chrome.storage.local.remove('cryptarch:inventory-baseline');
         void handlePollAlarm();
         sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === 'retry-manifest') {
+        void handleRetryManifest();
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === 'get-armor-taxonomy') {
+        const taxonomy = await handleGetArmorTaxonomy();
+        sendResponse({ ok: true, payload: taxonomy });
         return;
       }
       sendResponse({ ok: false, error: `unknown message ${msg.type}` });

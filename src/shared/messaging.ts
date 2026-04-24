@@ -8,6 +8,8 @@ export type MessageType =
   | 'auth-start'
   | 'auth-logout'
   | 'force-rebaseline'
+  | 'get-armor-taxonomy'
+  | 'retry-manifest'
   | 'trigger-poll-now';
 
 export interface Message<T = unknown> {

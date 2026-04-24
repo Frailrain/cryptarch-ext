@@ -19,6 +19,8 @@ import {
   logout as bungieLogout,
 } from '@/core/bungie/auth';
 import { getManifest, getEnhancedPerkMap } from '@/core/bungie/manifest';
+import { listArmorArchetypes, listArmorSets } from '@/core/scoring/armor-roll';
+import { ARMOR_TERTIARIES } from '@/core/rules/armor-rules';
 import {
   runPollCycle,
   type BaselineMap,
@@ -29,14 +31,37 @@ import {
   loadScoringConfig,
   loadWishlists,
 } from '@/core/storage/scoring-config';
-import { appendToFeed, getFeedEntry } from '@/core/storage/drop-feed';
 import {
+  appendToFeed,
+  getFeedEntry,
+  loadFeed,
+  updateFeedLock,
+  updateFeedRetryCount,
+} from '@/core/storage/drop-feed';
+import { setLockState } from '@/core/bungie/api';
+import {
+  MAX_RETRY_CYCLES,
+  attemptAutoLock,
+  isLockPending,
+  markFirstSeen,
+} from './autolock';
+import {
+  loadAuthState,
   loadPrimaryMembership,
+  loadTokens,
   savePrimaryMembership,
+  saveAuthState,
   saveBungieUser,
   type DestinyMembership,
 } from '@/core/storage/tokens';
-import type { DropFeedEntry, NewItemDrop } from '@/shared/types';
+import { showNotification } from '@/adapters/notifications';
+import type { Grade, NotificationThreshold, ScoringConfig } from '@/core/scoring/types';
+import type {
+  ArmorTaxonomyPayload,
+  AutolockFailedPayload,
+  DropFeedEntry,
+  NewItemDrop,
+} from '@/shared/types';
 
 const BASELINE_KEY = 'inventory-baseline';
 
@@ -87,6 +112,7 @@ export async function handleSignIn(): Promise<void> {
     crossSaveOverride: chosen.crossSaveOverride,
   };
   savePrimaryMembership(primary);
+  saveAuthState('signed-in');
   log('auth', 'sign-in complete', primary.displayName);
 }
 
@@ -95,6 +121,48 @@ export async function handleSignOut(): Promise<void> {
   log('auth', 'signing out');
   await bungieLogout();
   setItem(BASELINE_KEY, null);
+  saveAuthState('signed-out');
+}
+
+// --- Manifest kickoff --------------------------------------------------------
+
+// Proactively fetch the manifest at install/startup so the options page can
+// clear its first-boot loading indicator without waiting for a drop. Errors
+// are swallowed — the UI's retry button covers recovery.
+export async function kickoffManifestLoad(): Promise<void> {
+  try {
+    await getManifest();
+  } catch (err) {
+    logError('manifest', 'initial load failed', err instanceof Error ? err.message : err);
+  }
+}
+
+export async function handleRetryManifest(): Promise<void> {
+  log('manifest', 'retry requested');
+  try {
+    await getManifest();
+  } catch (err) {
+    logError('manifest', 'retry failed', err instanceof Error ? err.message : err);
+  }
+}
+
+// Derive the sets/archetypes/tertiaries lists for the Rules UI. Runs in the
+// SW so the options page doesn't need to hold the (large) manifest in memory.
+// On manifest failure we return empty sets/archetypes rather than throwing —
+// the Rules editor handles "loading" state for those, but tertiaries are
+// always available from the static ARMOR_TERTIARIES constant.
+export async function handleGetArmorTaxonomy(): Promise<ArmorTaxonomyPayload> {
+  try {
+    const manifest = await getManifest();
+    return {
+      sets: listArmorSets(manifest),
+      archetypes: listArmorArchetypes(manifest),
+      tertiaries: [...ARMOR_TERTIARIES],
+    };
+  } catch (err) {
+    logError('taxonomy', 'get failed', err instanceof Error ? err.message : err);
+    return { sets: [], archetypes: [], tertiaries: [...ARMOR_TERTIARIES] };
+  }
 }
 
 // --- Poll cycle --------------------------------------------------------------
@@ -103,7 +171,27 @@ export async function handlePollAlarm(): Promise<void> {
   await ensureLoaded();
 
   if (!isLoggedIn()) {
-    log('poll', 'skipping cycle — not signed in');
+    // Differentiate: tokens-but-expired (banner-worthy) vs no-tokens-yet
+    // (expected state pre-sign-in). Public-client sessions hit the expired
+    // branch ~1hr after sign-in since there's no refresh token.
+    const tokens = loadTokens();
+    if (tokens) {
+      const previousState = loadAuthState();
+      saveAuthState('expired');
+      log('poll', 'skipping cycle — session expired');
+      // Fire the OS toast only on the fresh signed-in → expired transition so
+      // we don't re-notify every minute while the session stays expired. Fixed
+      // notificationId means any accidental re-fire replaces rather than stacks.
+      if (previousState !== 'expired') {
+        void showNotification({
+          title: 'Cryptarch session expired',
+          message: 'Sign in again to resume drop tracking.',
+          notificationId: 'cryptarch-session-expired',
+        });
+      }
+    } else {
+      log('poll', 'skipping cycle — not signed in');
+    }
     return;
   }
   const primary = loadPrimaryMembership();
@@ -133,9 +221,15 @@ export async function handlePollAlarm(): Promise<void> {
     });
 
     if (result.isBaselineCycle) return;
-    if (result.newDrops.length === 0) return;
 
-    await handleNewDrops(result.newDrops);
+    if (result.newDrops.length > 0) {
+      await handleNewDrops(result.newDrops);
+    }
+
+    // Retry any entries still stuck on a prior cycle's 1623. Runs every poll
+    // tick even if there were no new drops this cycle — 1623 typically clears
+    // within a minute or two once Bungie's backend "settles" the new item.
+    await retryPendingAutolocks();
   } catch (err) {
     logError('poll', 'cycle error', err instanceof Error ? err.message : err);
   }
@@ -211,12 +305,184 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
         ? result.armorRoll.tier
         : null,
       isExotic: drop.tierType === 'Exotic',
+      characterId: drop.characterId,
     };
     appendToFeed(entry);
+    markFirstSeen(entry.instanceId, drop.detectedAt);
+    maybeNotify(entry, config.notificationThreshold, false);
+    if (shouldAutoLock(entry, config)) {
+      void handleAutoLock(entry, config);
+    }
   }
 
   logJson('drops', 'processed cycle', {
     total: drops.length,
     afterFlapSuppression: filtered.length,
   });
+}
+
+// --- Notification trigger ----------------------------------------------------
+
+// Grade rank for threshold comparison. Higher = rarer.
+const GRADE_RANK: Record<Grade, number> = { S: 5, A: 4, B: 3, C: 2, D: 1, F: 0 };
+
+function weaponGradeMeetsThreshold(
+  grade: Grade | null,
+  threshold: NotificationThreshold,
+): boolean {
+  if (!grade) return false;
+  const gradeRank = GRADE_RANK[grade];
+  const minRank =
+    threshold === 'S' ? GRADE_RANK.S : threshold === 'SA' ? GRADE_RANK.A : GRADE_RANK.B;
+  return gradeRank >= minRank;
+}
+
+// Priority: exotic > armor match > weapon grade. First matching rule wins — a
+// single drop fires at most one toast. instanceId is the notificationId so any
+// later call for the same drop (flap re-detection, or autolock "(locked)"
+// suffix update) replaces rather than stacks.
+function maybeNotify(
+  entry: DropFeedEntry,
+  threshold: NotificationThreshold,
+  locked: boolean,
+): void {
+  let title: string | null = null;
+  let message: string | null = null;
+
+  if (entry.isExotic) {
+    title = `Exotic dropped: ${entry.itemName}`;
+    message = `${entry.itemType === 'armor' ? 'Armor' : 'Weapon'} — check inventory`;
+  } else if (entry.itemType === 'armor' && entry.armorMatched === true) {
+    title = `Armor match: ${entry.itemName}`;
+    const bits = [entry.armorSet, entry.armorArchetype, entry.armorTertiary].filter(
+      (b): b is string => !!b,
+    );
+    message = bits.length > 0 ? bits.join(' / ') : 'Rule match';
+  } else if (
+    entry.itemType === 'weapon' &&
+    weaponGradeMeetsThreshold(entry.grade, threshold)
+  ) {
+    title = `${entry.grade}-tier: ${entry.itemName}`;
+    message = `${entry.weaponType ?? 'Weapon'} — Wishlist match`;
+  }
+
+  if (!title || !message) return;
+  if (locked) message = `${message} (locked)`;
+
+  void showNotification({
+    title,
+    message,
+    iconUrl: entry.itemIcon,
+    notificationId: entry.instanceId,
+  }).catch(() => {
+    // Already logged inside the adapter; swallow so a failed toast doesn't
+    // bubble up and kill the rest of the poll cycle.
+  });
+}
+
+// --- Autolock ----------------------------------------------------------------
+
+// Target logic per Brief #8 Part B:
+//   Weapon, grade S, NOT exotic         → lock
+//   Weapon, exotic                      → never (toast still fires)
+//   Armor, ruleMatched, tier 4+, !exotic → lock if autoLockOnArmorMatch
+//   Armor, ruleMatched, exotic           → lock if autoLockOnArmorMatch
+function shouldAutoLock(entry: DropFeedEntry, config: ScoringConfig): boolean {
+  if (entry.itemType === 'weapon') {
+    return entry.grade === 'S' && !entry.isExotic;
+  }
+  // armor
+  if (!entry.armorMatched) return false;
+  if (!config.autoLockOnArmorMatch) return false;
+  if (entry.isExotic) return true;
+  return entry.armorTier === 4 || entry.armorTier === 5;
+}
+
+async function handleAutoLock(entry: DropFeedEntry, config: ScoringConfig): Promise<void> {
+  // Feed-locked check is the canonical guard — survives SW restarts unlike
+  // the in-memory pendingLocks set.
+  const current = getFeedEntry(entry.instanceId);
+  if (current?.locked) return;
+  if (isLockPending(entry.instanceId)) return;
+  if (!entry.characterId) {
+    logError('autolock', 'missing characterId on feed entry', entry.instanceId);
+    return;
+  }
+
+  const currentCount = current?.retryCycleCount ?? 0;
+  if (currentCount >= MAX_RETRY_CYCLES) return;
+
+  const primary = loadPrimaryMembership();
+  if (!primary) return;
+
+  const isFirstAttempt = currentCount === 0;
+  const result = await attemptAutoLock({
+    instanceId: entry.instanceId,
+    itemName: entry.itemName,
+    membershipType: primary.membershipType,
+    characterId: entry.characterId,
+    cycleAttempt: currentCount + 1,
+    setLockState,
+  });
+
+  if (result.kind === 'skipped-pending') return;
+
+  if (result.kind === 'success') {
+    updateFeedLock(entry.instanceId, true);
+    // Only re-fire the toast on the first-attempt success so the user isn't
+    // re-notified on cross-cycle retries that eventually land.
+    if (isFirstAttempt) {
+      const updatedEntry = { ...entry, locked: true };
+      maybeNotify(updatedEntry, config.notificationThreshold, true);
+    }
+    return;
+  }
+
+  // Persist the incremented attempt count so the retry state survives SW
+  // death between poll cycles.
+  const newCount = currentCount + 1;
+  updateFeedRetryCount(entry.instanceId, newCount);
+
+  const exhausted =
+    result.kind === 'failed' ||
+    (result.kind === 'retryable' && newCount >= MAX_RETRY_CYCLES);
+
+  if (exhausted) {
+    broadcastAutolockFailed(entry);
+  }
+  // Otherwise: retryable and still under cap — retryPendingAutolocks picks it
+  // up on the next poll cycle.
+}
+
+function broadcastAutolockFailed(entry: DropFeedEntry): void {
+  const payload: AutolockFailedPayload = {
+    itemName: entry.itemName,
+    instanceId: entry.instanceId,
+    at: Date.now(),
+  };
+  setItem('autolock.failed.last', payload);
+  logJson('autolock', 'gave up after retries', payload);
+}
+
+// Scan the feed for entries that still want to be autolocked after a prior
+// cycle's 1623 failure. Called from handlePollAlarm after new drops are
+// processed so first-attempts and retries run in the same poll tick.
+export async function retryPendingAutolocks(): Promise<void> {
+  const config = loadScoringConfig();
+  config.armorRules = loadArmorRules();
+  config.wishlists = loadWishlists();
+  const feed = loadFeed();
+  const candidates = feed.filter((entry) => {
+    if (entry.locked) return false;
+    const count = entry.retryCycleCount ?? 0;
+    if (count === 0) return false; // first attempt — already tried synchronously on detection
+    if (count >= MAX_RETRY_CYCLES) return false;
+    if (!entry.characterId) return false;
+    return shouldAutoLock(entry, config);
+  });
+  if (candidates.length === 0) return;
+  logJson('autolock', 'retrying stuck entries', { count: candidates.length });
+  for (const entry of candidates) {
+    await handleAutoLock(entry, config);
+  }
 }

@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { loadFeed } from '@/core/storage/drop-feed';
 import { isLoggedIn } from '@/core/bungie/auth';
-import { loadPrimaryMembership } from '@/core/storage/tokens';
-import { onKeyChanged } from '@/adapters/storage';
+import { loadAuthState, loadPrimaryMembership, type AuthState } from '@/core/storage/tokens';
+import { getItem, onKeyChanged } from '@/adapters/storage';
 import { send } from '@/shared/messaging';
 import type { DropFeedEntry } from '@/shared/types';
 import { DropLogPanel, type DropTypeFilter, type DropMatchFilter } from './tabs/DropLogPanel';
+import { RulesPanel } from './tabs/RulesPanel';
+import { SessionExpiredBanner } from './components/SessionExpiredBanner';
+import { ManifestLoadingCard } from './components/ManifestLoadingCard';
+import { AutolockFailedBanner } from './components/AutolockFailedBanner';
+import type { ManifestProgress } from '@/core/bungie/manifest';
+import type { ArmorTaxonomyPayload, AutolockFailedPayload } from '@/shared/types';
+import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
+
+type Tab = 'drops' | 'rules';
 
 export function Settings() {
   const [signedIn, setSignedIn] = useState<boolean>(() => isLoggedIn());
@@ -20,6 +29,23 @@ export function Settings() {
   const [matchFilter, setMatchFilter] = useState<DropMatchFilter>('all');
   const [showA, setShowA] = useState(true);
   const [showB, setShowB] = useState(false);
+  const [authState, setAuthState] = useState<AuthState>(() => loadAuthState());
+  const [expiredBannerDismissed, setExpiredBannerDismissed] = useState(false);
+  const [manifestReady, setManifestReady] = useState<boolean>(
+    () => getItem<boolean>('manifest.ready') === true,
+  );
+  const [manifestProgress, setManifestProgress] = useState<ManifestProgress | null>(
+    () => getItem<ManifestProgress>('manifest.progress'),
+  );
+  const [autolockFailed, setAutolockFailed] = useState<AutolockFailedPayload | null>(
+    () => getItem<AutolockFailedPayload>('autolock.failed.last'),
+  );
+  const [autolockFailedDismissedAt, setAutolockFailedDismissedAt] = useState<number | null>(null);
+  const [tab, setTab] = useState<Tab>('drops');
+  const [taxonomy, setTaxonomy] = useState<ArmorTaxonomyPayload | null>(null);
+  const [autoLockOnArmorMatch, setAutoLockOnArmorMatch] = useState<boolean>(
+    () => loadScoringConfig().autoLockOnArmorMatch,
+  );
 
   useEffect(() => {
     const unsubFeed = onKeyChanged<DropFeedEntry[]>('drop-feed', (value) => {
@@ -34,16 +60,68 @@ export function Settings() {
         setDisplayName(value?.displayName ?? null);
       },
     );
+    const unsubAuthState = onKeyChanged<AuthState>('auth.state', (value) => {
+      const next = value ?? 'signed-out';
+      setAuthState(next);
+      // Re-show the banner on every fresh expiry transition. Re-signing in
+      // moves to 'signed-in' and re-expiring later flips back to 'expired';
+      // this reset ensures the user sees the banner the second time too.
+      setExpiredBannerDismissed(false);
+    });
+    const unsubManifest = onKeyChanged<boolean>('manifest.ready', (value) => {
+      setManifestReady(value === true);
+    });
+    const unsubManifestProgress = onKeyChanged<ManifestProgress>(
+      'manifest.progress',
+      (value) => {
+        setManifestProgress(value);
+      },
+    );
+    const unsubAutolockFailed = onKeyChanged<AutolockFailedPayload>(
+      'autolock.failed.last',
+      (value) => {
+        setAutolockFailed(value);
+      },
+    );
     return () => {
       unsubFeed();
       unsubTokens();
       unsubMembership();
+      unsubAuthState();
+      unsubManifest();
+      unsubManifestProgress();
+      unsubAutolockFailed();
     };
   }, []);
 
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 15_000);
     return () => window.clearInterval(id);
+  }, []);
+
+  // Fetch armor taxonomy (sets/archetypes/tertiaries) from the SW once the
+  // manifest is ready. Cached at the Settings level so switching between
+  // Drops and Rules tabs doesn't re-request. Re-fetched if manifest ever
+  // transitions back to loading (shouldn't, but defensive).
+  useEffect(() => {
+    if (!manifestReady) return;
+    if (taxonomy !== null) return;
+    let cancelled = false;
+    void (async () => {
+      const resp = await send<{ ok: boolean; payload: ArmorTaxonomyPayload }>(
+        { type: 'get-armor-taxonomy' },
+      );
+      if (!cancelled && resp?.ok) setTaxonomy(resp.payload);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [manifestReady, taxonomy]);
+
+  const handleAutoLockToggle = useCallback((next: boolean) => {
+    setAutoLockOnArmorMatch(next);
+    const config = loadScoringConfig();
+    saveScoringConfig({ ...config, autoLockOnArmorMatch: next });
   }, []);
 
   const handleSignIn = useCallback(async () => {
@@ -64,8 +142,34 @@ export function Settings() {
     await send({ type: 'trigger-poll-now' });
   }, []);
 
+  const showExpiredBanner = authState === 'expired' && !expiredBannerDismissed;
+  const showAutolockFailedBanner =
+    autolockFailed !== null && autolockFailed.at !== autolockFailedDismissedAt;
+
+  if (!manifestReady) {
+    return (
+      <ManifestLoadingCard
+        progress={manifestProgress}
+        onRetry={() => void send({ type: 'retry-manifest' })}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-bg-primary text-text-primary">
+      {showExpiredBanner && (
+        <SessionExpiredBanner
+          onSignIn={handleSignIn}
+          onDismiss={() => setExpiredBannerDismissed(true)}
+          pending={signInPending}
+        />
+      )}
+      {showAutolockFailedBanner && autolockFailed && (
+        <AutolockFailedBanner
+          itemName={autolockFailed.itemName}
+          onDismiss={() => setAutolockFailedDismissedAt(autolockFailed.at)}
+        />
+      )}
       <header className="border-b border-bg-border">
         <div className="max-w-5xl mx-auto px-6 py-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -118,30 +222,51 @@ export function Settings() {
           </div>
         ) : (
           <>
-            <div className="rounded-lg border border-bg-border bg-bg-card p-4 flex items-center justify-between">
-              <div className="text-sm text-text-muted">
-                Polling every minute. New drops appear below as Cryptarch scores them.
-              </div>
-              <button
-                onClick={handlePollNow}
-                className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary"
-              >
-                Poll now
-              </button>
-            </div>
+            <nav className="flex gap-1 border-b border-bg-border">
+              <TabButton active={tab === 'drops'} onClick={() => setTab('drops')}>
+                Drops
+              </TabButton>
+              <TabButton active={tab === 'rules'} onClick={() => setTab('rules')}>
+                Rules
+              </TabButton>
+            </nav>
 
-            <DropLogPanel
-              feed={feed}
-              typeFilter={typeFilter}
-              matchFilter={matchFilter}
-              showA={showA}
-              showB={showB}
-              nowTick={nowTick}
-              onTypeFilterChange={setTypeFilter}
-              onMatchFilterChange={setMatchFilter}
-              onToggleA={() => setShowA((v) => !v)}
-              onToggleB={() => setShowB((v) => !v)}
-            />
+            {tab === 'drops' && (
+              <>
+                <div className="rounded-lg border border-bg-border bg-bg-card p-4 flex items-center justify-between">
+                  <div className="text-sm text-text-muted">
+                    Polling every minute. New drops appear below as Cryptarch scores them.
+                  </div>
+                  <button
+                    onClick={handlePollNow}
+                    className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary"
+                  >
+                    Poll now
+                  </button>
+                </div>
+
+                <DropLogPanel
+                  feed={feed}
+                  typeFilter={typeFilter}
+                  matchFilter={matchFilter}
+                  showA={showA}
+                  showB={showB}
+                  nowTick={nowTick}
+                  onTypeFilterChange={setTypeFilter}
+                  onMatchFilterChange={setMatchFilter}
+                  onToggleA={() => setShowA((v) => !v)}
+                  onToggleB={() => setShowB((v) => !v)}
+                />
+              </>
+            )}
+
+            {tab === 'rules' && (
+              <RulesPanel
+                taxonomy={taxonomy}
+                autoLockOnArmorMatch={autoLockOnArmorMatch}
+                onAutoLockToggle={handleAutoLockToggle}
+              />
+            )}
           </>
         )}
 
@@ -150,5 +275,28 @@ export function Settings() {
         </footer>
       </main>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 text-sm border-b-2 -mb-px ${
+        active
+          ? 'border-rahool-blue text-text-primary'
+          : 'border-transparent text-text-muted hover:text-text-primary'
+      }`}
+    >
+      {children}
+    </button>
   );
 }

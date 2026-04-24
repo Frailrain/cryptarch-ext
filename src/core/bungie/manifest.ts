@@ -46,6 +46,22 @@ export interface ManifestProgress {
 type ProgressListener = (p: ManifestProgress) => void;
 const progressListeners = new Set<ProgressListener>();
 
+// Persist a 'ready' flag in chrome.storage so the options page can decide
+// whether to show the first-boot loading card. Write directly — the global
+// onChanged listener in the storage adapter will update any in-memory cache.
+function markManifestReady(): void {
+  void chrome.storage.local.set({ 'cryptarch:manifest.ready': true });
+}
+
+// Mirror every progress event to chrome.storage so the options-page loading
+// card can render real stage/pct feedback instead of an indeterminate spinner.
+// Registered unconditionally at module load so both SW and page contexts
+// participate — only the SW will actually emit progress, but the write is
+// idempotent from either side.
+progressListeners.add((p) => {
+  void chrome.storage.local.set({ 'cryptarch:manifest.progress': p });
+});
+
 let cache: ManifestCache | null = null;
 let loadingPromise: Promise<ManifestCache> | null = null;
 
@@ -78,6 +94,7 @@ export async function getManifest(): Promise<ManifestCache> {
     const existing = await idbGet<ManifestCache>(STORES.manifest, version);
     if (existing) {
       cache = existing;
+      markManifestReady();
       emit({ stage: 'done', pct: 100, version });
       return existing;
     }
@@ -130,6 +147,7 @@ export async function getManifest(): Promise<ManifestCache> {
     }
 
     cache = built;
+    markManifestReady();
     emit({ stage: 'done', pct: 100, version });
     return built;
   })();
