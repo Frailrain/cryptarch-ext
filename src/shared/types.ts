@@ -41,6 +41,10 @@ export interface DropFeedEntry {
   // Number of autolock attempts made so far (including the first). Capped at
   // 3 — beyond that we broadcast autolock-failed and stop retrying.
   retryCycleCount?: number;
+  // Set to true when the item has been absent from the user's profile for
+  // DELETION_CONFIRM_CYCLES consecutive polls (~90s). UI shows the row with
+  // strikethrough / muted styling. Once deleted, the row never flips back.
+  deleted?: boolean;
 }
 
 export interface DropLockUpdatedPayload {

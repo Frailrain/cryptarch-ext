@@ -280,20 +280,20 @@ function DropLogRow({
       data-instance-id={entry.instanceId}
       className={`py-2.5 flex items-center gap-3 px-2 rounded ${tinted} ${
         highlighted ? 'pulse-highlight' : ''
-      }`}
+      } ${entry.deleted ? 'opacity-60' : ''}`}
     >
       {entry.itemIcon ? (
         <img
           src={entry.itemIcon}
           alt=""
-          className={`w-10 h-10 rounded border ${entry.isExotic ? 'border-grade-exotic/60' : 'border-bg-border'}`}
+          className={`w-10 h-10 rounded border ${entry.isExotic ? 'border-grade-exotic/60' : 'border-bg-border'} ${entry.deleted ? 'grayscale' : ''}`}
         />
       ) : (
         <div className="w-10 h-10 rounded border border-bg-border bg-bg-primary" />
       )}
       <div className="flex-1 min-w-0">
         <div
-          className={`text-sm truncate ${entry.isExotic ? 'text-grade-exotic' : 'text-text-primary'}`}
+          className={`text-sm truncate ${entry.isExotic ? 'text-grade-exotic' : 'text-text-primary'} ${entry.deleted ? 'line-through' : ''}`}
         >
           {entry.itemName}
         </div>
@@ -317,9 +317,11 @@ function DropLogRow({
       ) : (
         <span className="w-6 h-6 inline-block" aria-hidden="true" />
       )}
-      <LockIcon locked={entry.locked} shouldShow={lockRelevant} />
-      <div className="text-xs text-text-muted w-16 text-right">
-        {formatRelativeTimestamp(nowTick - entry.timestamp)}
+      <LockIcon locked={entry.locked} shouldShow={lockRelevant && !entry.deleted} />
+      <div className="text-xs text-text-muted w-20 text-right">
+        {entry.deleted
+          ? `Dismantled ${formatRelativeTimestamp(nowTick - entry.timestamp)}`
+          : formatRelativeTimestamp(nowTick - entry.timestamp)}
       </div>
     </li>
   );

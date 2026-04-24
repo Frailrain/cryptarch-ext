@@ -50,16 +50,38 @@ const TIER_TYPE_NAMES: Record<number, TierType> = {
 export interface BaselineLocation {
   containerType: 'inventory' | 'vault' | 'equipped';
   characterId: string;
+  // itemHash kept in baseline so we can render a "Dismantled" ghost row after
+  // the item is gone (manifest lookup gives us name + icon from the hash).
+  itemHash: number;
+  // Number of consecutive poll cycles this instanceId has been absent from
+  // the profile. Reaches DELETION_CONFIRM_CYCLES → confirmed deletion.
+  // Bungie's profile API is eventually-consistent; items can flap out for a
+  // cycle or two, so we don't mark deleted on a single miss.
+  missingCycles?: number;
 }
 
 export type BaselineMap = Record<string, BaselineLocation>;
 
+export interface DeletedItem {
+  instanceId: string;
+  itemHash: number;
+  characterId: string;
+}
+
 export interface PollCycleResult {
   newDrops: NewItemDrop[];
+  confirmedDeletions: DeletedItem[];
   updatedBaseline: BaselineMap;
   itemsKnown: number;
   isBaselineCycle: boolean;
 }
+
+// Three 30s cycles = 90s of silence before we call an item dismantled.
+export const DELETION_CONFIRM_CYCLES = 3;
+// If the current profile has fewer than half the items in the prior baseline,
+// treat as an API glitch and skip deletion processing this cycle. Realistic
+// D2 gameplay doesn't dismantle half your vault between two 30-second polls.
+const DELETION_SAFETY_RATIO = 0.5;
 
 const PROFILE_COMPONENTS = [
   ProfileComponent.Profiles,
@@ -80,20 +102,60 @@ export async function runPollCycle(
 ): Promise<PollCycleResult> {
   const profile = await getProfile(membershipType, membershipId, PROFILE_COMPONENTS);
   const currentMap = buildItemLocationMap(profile);
-  const updatedBaseline = Object.fromEntries(currentMap.entries());
+
+  // Seed updatedBaseline with everything currently present (missingCycles
+  // reset to undefined/0 for items that returned from a flap).
+  const updatedBaseline: BaselineMap = {};
+  for (const [id, loc] of currentMap.entries()) {
+    updatedBaseline[id] = loc;
+  }
 
   if (!priorBaseline) {
     return {
       newDrops: [],
+      confirmedDeletions: [],
       updatedBaseline,
       itemsKnown: currentMap.size,
       isBaselineCycle: true,
     };
   }
 
+  // New drops: items present now but not in prior baseline at all. Items
+  // that are in prior-but-missing (ghost state) don't count as new when they
+  // come back — same instanceId means same item.
   const newIds: string[] = [];
   for (const id of currentMap.keys()) {
     if (!(id in priorBaseline)) newIds.push(id);
+  }
+
+  // Deletion detection. Safety rail: if the profile shrank by more than half,
+  // assume an API glitch and carry the prior baseline forward unchanged this
+  // cycle — better to miss one deletion tick than false-positive everything.
+  const suspectApiGlitch =
+    currentMap.size < Object.keys(priorBaseline).length * DELETION_SAFETY_RATIO;
+  const confirmedDeletions: DeletedItem[] = [];
+
+  if (suspectApiGlitch) {
+    // Preserve prior baseline ghost counters as-is; don't advance them.
+    for (const [id, priorLoc] of Object.entries(priorBaseline)) {
+      if (!(id in updatedBaseline)) updatedBaseline[id] = priorLoc;
+    }
+  } else {
+    for (const [id, priorLoc] of Object.entries(priorBaseline)) {
+      if (id in updatedBaseline) continue; // Still present — already carried.
+      const prevMissing = priorLoc.missingCycles ?? 0;
+      const newMissing = prevMissing + 1;
+      if (newMissing >= DELETION_CONFIRM_CYCLES) {
+        confirmedDeletions.push({
+          instanceId: id,
+          itemHash: priorLoc.itemHash,
+          characterId: priorLoc.characterId,
+        });
+        // Don't carry forward — confirmed gone.
+      } else {
+        updatedBaseline[id] = { ...priorLoc, missingCycles: newMissing };
+      }
+    }
   }
 
   const drops = newIds.length
@@ -105,6 +167,7 @@ export async function runPollCycle(
 
   return {
     newDrops: relevant,
+    confirmedDeletions,
     updatedBaseline,
     itemsKnown: currentMap.size,
     isBaselineCycle: false,
@@ -117,7 +180,11 @@ function buildItemLocationMap(profile: DestinyProfileResponse): Map<string, Base
   const vaultItems = profile.profileInventory?.data?.items ?? [];
   for (const item of vaultItems) {
     if (item.itemInstanceId) {
-      map.set(item.itemInstanceId, { containerType: 'vault', characterId: '' });
+      map.set(item.itemInstanceId, {
+        containerType: 'vault',
+        characterId: '',
+        itemHash: item.itemHash,
+      });
     }
   }
 
@@ -125,7 +192,11 @@ function buildItemLocationMap(profile: DestinyProfileResponse): Map<string, Base
   for (const [charId, bucket] of Object.entries(charInv)) {
     for (const item of bucket.items) {
       if (item.itemInstanceId) {
-        map.set(item.itemInstanceId, { containerType: 'inventory', characterId: charId });
+        map.set(item.itemInstanceId, {
+          containerType: 'inventory',
+          characterId: charId,
+          itemHash: item.itemHash,
+        });
       }
     }
   }
@@ -134,7 +205,11 @@ function buildItemLocationMap(profile: DestinyProfileResponse): Map<string, Base
   for (const [charId, bucket] of Object.entries(charEquip)) {
     for (const item of bucket.items) {
       if (item.itemInstanceId) {
-        map.set(item.itemInstanceId, { containerType: 'equipped', characterId: charId });
+        map.set(item.itemInstanceId, {
+          containerType: 'equipped',
+          characterId: charId,
+          itemHash: item.itemHash,
+        });
       }
     }
   }

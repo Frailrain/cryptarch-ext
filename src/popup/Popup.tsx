@@ -148,13 +148,21 @@ export function Popup() {
         </>
       )}
 
-      <div className="border-t border-bg-border px-3 py-2">
+      <div className="border-t border-bg-border px-3 py-2 space-y-1.5">
         <button
           onClick={() => openDashboard()}
           className="w-full text-sm px-3 py-2 rounded bg-rahool-blue/20 text-rahool-blue border border-rahool-blue/40 hover:bg-rahool-blue/30"
         >
           Open Dashboard
         </button>
+        <a
+          href="https://ko-fi.com/frailrain"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block text-center text-[10px] text-text-muted hover:text-rahool-blue"
+        >
+          Buy me a coffee ☕
+        </a>
       </div>
     </div>
   );
@@ -172,13 +180,12 @@ function Header({
   return (
     <div className="flex items-center justify-between border-b border-bg-border px-3 py-2">
       <div className="flex items-center gap-2">
-        <span
-          className="inline-flex items-center justify-center w-6 h-6 rounded text-xs font-semibold"
-          style={{ background: '#D4A82C', color: '#0A0D12' }}
+        <img
+          src={chrome.runtime.getURL('icons/icon48.png')}
+          alt=""
+          className="w-6 h-6 rounded"
           aria-hidden="true"
-        >
-          C
-        </span>
+        />
         <span className="text-sm font-semibold">Cryptarch</span>
       </div>
       {signedIn ? (
@@ -287,32 +294,35 @@ function DropRow({
   nowTick: number;
   onClick: () => void;
 }) {
+  const deleted = entry.deleted === true;
   return (
     <li>
       <button
         onClick={onClick}
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-border/40 text-left"
+        className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-border/40 text-left ${
+          deleted ? 'opacity-60' : ''
+        }`}
       >
         <Chip entry={entry} />
         <span
           className={`flex-1 min-w-0 text-xs truncate ${
             entry.isExotic ? 'text-grade-exotic' : 'text-text-primary'
-          }`}
+          } ${deleted ? 'line-through' : ''}`}
         >
           {entry.itemName}
-          {entry.itemType === 'armor' && entry.armorMatched === true && (
+          {!deleted && entry.itemType === 'armor' && entry.armorMatched === true && (
             <span className="text-emerald-400 ml-1" aria-label="matched">
               ✓
             </span>
           )}
-          {entry.locked && (
+          {!deleted && entry.locked && (
             <span className="ml-1" aria-label="locked">
               🔒
             </span>
           )}
         </span>
         <span className="text-[10px] text-text-muted whitespace-nowrap">
-          {formatRelative(nowTick - entry.timestamp)}
+          {deleted ? 'Dismantled' : formatRelative(nowTick - entry.timestamp)}
         </span>
       </button>
     </li>

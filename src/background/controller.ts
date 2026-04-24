@@ -24,6 +24,7 @@ import { ARMOR_TERTIARIES } from '@/core/rules/armor-rules';
 import {
   runPollCycle,
   type BaselineMap,
+  type DeletedItem,
 } from '@/core/bungie/inventory';
 import { scoreItem } from '@/core/scoring/engine';
 import { loadArmorRules } from '@/core/rules/armor-rules';
@@ -226,6 +227,10 @@ export async function handlePollAlarm(): Promise<void> {
       await handleNewDrops(result.newDrops);
     }
 
+    if (result.confirmedDeletions.length > 0) {
+      await handleConfirmedDeletions(result.confirmedDeletions);
+    }
+
     // Retry any entries still stuck on a prior cycle's 1623. Runs every poll
     // tick even if there were no new drops this cycle — 1623 typically clears
     // within a minute or two once Bungie's backend "settles" the new item.
@@ -380,6 +385,73 @@ function maybeNotify(
   });
 }
 
+// --- Deletion handling -------------------------------------------------------
+
+// For each confirmed deletion: flip the existing feed entry to deleted state
+// (if we already scored this item as a drop), or create a new "ghost" feed
+// entry using manifest data (if the item predates our observation window).
+// In both cases the timestamp is set to now so deleted items surface at the
+// top of the feed when the user scrolls to see what just happened.
+async function handleConfirmedDeletions(deletions: DeletedItem[]): Promise<void> {
+  logJson('deletion', 'confirmed', { count: deletions.length });
+
+  let manifest: Awaited<ReturnType<typeof getManifest>> | null = null;
+
+  for (const d of deletions) {
+    const existing = getFeedEntry(d.instanceId);
+    if (existing) {
+      const updated: DropFeedEntry = {
+        ...existing,
+        deleted: true,
+        timestamp: Date.now(),
+      };
+      appendToFeed(updated);
+      continue;
+    }
+
+    // Ghost entry path — we never saw this item as a scored drop. Look up
+    // the manifest def to render a meaningful row.
+    if (!manifest) {
+      try {
+        manifest = await getManifest();
+      } catch (err) {
+        logError('deletion', 'manifest load failed; skipping ghost entries', err);
+        return;
+      }
+    }
+    const def = manifest.definitions.DestinyInventoryItemDefinition[d.itemHash];
+    if (!def) continue;
+    const itemTypeEnum = def.itemType;
+    // Only weapons (3) and armor (2). Skip everything else.
+    if (itemTypeEnum !== 2 && itemTypeEnum !== 3) continue;
+    const tierType = def.inventory?.tierType;
+    // Skip common/basic whites — they'd flood the feed with noise.
+    if (tierType === 2 || tierType === 3) continue;
+
+    const iconPath = def.displayProperties?.icon;
+    const ghost: DropFeedEntry = {
+      instanceId: d.instanceId,
+      itemName: def.displayProperties?.name || `Item ${d.itemHash}`,
+      itemIcon: iconPath ? `https://www.bungie.net${iconPath}` : '',
+      itemType: itemTypeEnum === 2 ? 'armor' : 'weapon',
+      grade: null,
+      timestamp: Date.now(),
+      locked: false,
+      perkIcons: [],
+      weaponType: null,
+      armorMatched: null,
+      armorClass: null,
+      armorSet: null,
+      armorArchetype: null,
+      armorTertiary: null,
+      armorTier: null,
+      isExotic: tierType === 6,
+      deleted: true,
+    };
+    appendToFeed(ghost);
+  }
+}
+
 // --- Autolock ----------------------------------------------------------------
 
 // Target logic per Brief #8 Part B:
@@ -474,6 +546,7 @@ export async function retryPendingAutolocks(): Promise<void> {
   const feed = loadFeed();
   const candidates = feed.filter((entry) => {
     if (entry.locked) return false;
+    if (entry.deleted) return false; // no point locking an item that's gone
     const count = entry.retryCycleCount ?? 0;
     if (count === 0) return false; // first attempt — already tried synchronously on detection
     if (count >= MAX_RETRY_CYCLES) return false;

@@ -203,19 +203,27 @@ export function Settings() {
       <header className="border-b border-bg-border">
         <div className="max-w-5xl mx-auto px-6 py-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span
-              className="inline-flex items-center justify-center w-9 h-9 rounded font-semibold"
-              style={{ background: '#D4A82C', color: '#0A0D12' }}
+            <img
+              src={chrome.runtime.getURL('icons/icon48.png')}
+              alt=""
+              className="w-9 h-9 rounded"
               aria-hidden="true"
-            >
-              C
-            </span>
+            />
             <div>
               <div className="text-lg font-semibold leading-tight">Cryptarch</div>
               <div className="text-xs text-text-muted">Loot Appraiser · Chrome edition</div>
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <a
+              href="https://ko-fi.com/frailrain"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Support on Ko-fi"
+              className="text-xs text-text-muted hover:text-rahool-blue"
+            >
+              Buy me a coffee ☕
+            </a>
             {signedIn && displayName && (
               <span className="text-sm text-text-muted">Signed in as {displayName}</span>
             )}
@@ -265,7 +273,7 @@ export function Settings() {
               <>
                 <div className="rounded-lg border border-bg-border bg-bg-card p-4 flex items-center justify-between">
                   <div className="text-sm text-text-muted">
-                    Polling every minute. New drops appear below as Cryptarch scores them.
+                    Updates every 30ish seconds. New drops appear below as Cryptarch scores them.
                   </div>
                   <button
                     onClick={handlePollNow}
@@ -304,7 +312,7 @@ export function Settings() {
         )}
 
         <footer className="text-xs text-text-muted text-center pt-6">
-          Cryptarch · Chrome edition · v0.1.0 (Session 1 — sign-in + polling + drop feed)
+          Cryptarch · Chrome edition · v0.1.0
         </footer>
       </main>
     </div>

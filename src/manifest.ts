@@ -3,13 +3,22 @@ import pkg from '../package.json';
 
 export default defineManifest({
   manifest_version: 3,
-  name: 'Cryptarch — Loot Appraiser',
+  name: 'Cryptarch - Destiny 2 Loot Appraiser',
   version: pkg.version,
   description:
     'Real-time god roll alerts for Destiny 2. Auto-locks keepers before you dismantle them.',
+  icons: {
+    16: 'icons/icon16.png',
+    48: 'icons/icon48.png',
+    128: 'icons/icon128.png',
+  },
   action: {
     default_title: 'Cryptarch',
     default_popup: 'src/popup/popup.html',
+    default_icon: {
+      16: 'icons/icon16.png',
+      48: 'icons/icon48.png',
+    },
   },
   options_page: 'src/settings/settings.html',
   background: {
@@ -21,8 +30,4 @@ export default defineManifest({
     'https://www.bungie.net/*',
     'https://raw.githubusercontent.com/*',
   ],
-  // Icons intentionally omitted — Matt's design pass is a parallel track.
-  // Drop 16/48/128 PNGs into public/icons/ and re-add the `icons` block
-  // before Chrome Web Store submission. Without them Chrome shows a generic
-  // puzzle-piece icon; functionality is unaffected.
 });
