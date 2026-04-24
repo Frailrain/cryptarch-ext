@@ -26,6 +26,18 @@ function GradeChip({ grade }: { grade: Grade }) {
   );
 }
 
+function ExoticChip() {
+  return (
+    <span
+      className="inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold border bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50"
+      aria-label="exotic"
+      title="Exotic"
+    >
+      Ex
+    </span>
+  );
+}
+
 function MatchChip({ matched }: { matched: boolean }) {
   return matched ? (
     <span
@@ -75,15 +87,20 @@ interface DropLogPanelProps {
   matchFilter: DropMatchFilter;
   showA: boolean;
   showB: boolean;
+  showExotic: boolean;
   nowTick: number;
+  // When set (from popup deep-link), the matching row renders with
+  // pulse-highlight for ~1.5s after scroll-into-view.
+  highlightInstanceId?: string | null;
   onTypeFilterChange: (v: DropTypeFilter) => void;
   onMatchFilterChange: (v: DropMatchFilter) => void;
   onToggleA: () => void;
   onToggleB: () => void;
+  onToggleExotic: () => void;
 }
 
 export function DropLogPanel(props: DropLogPanelProps) {
-  const { feed, typeFilter, matchFilter, showA, showB, nowTick } = props;
+  const { feed, typeFilter, matchFilter, showA, showB, showExotic, nowTick, highlightInstanceId } = props;
 
   const weaponFilterRelevant = typeFilter !== 'armor';
   const matchFilterRelevant = typeFilter !== 'weapon';
@@ -91,6 +108,9 @@ export function DropLogPanel(props: DropLogPanelProps) {
   const visible = useMemo(() => {
     return feed.filter((e) => {
       if (typeFilter !== 'all' && e.itemType !== typeFilter) return false;
+      // Exotics are a separate bucket from S/A/B — they check the Exotic
+      // filter only, not the letter-grade filters.
+      if (e.isExotic) return showExotic;
       if (e.itemType === 'weapon') {
         if (e.grade === 'S') return true;
         if (e.grade === 'A') return showA;
@@ -101,7 +121,7 @@ export function DropLogPanel(props: DropLogPanelProps) {
       if (matchFilter === 'not-matched' && e.armorMatched !== false) return false;
       return true;
     });
-  }, [feed, typeFilter, matchFilter, showA, showB]);
+  }, [feed, typeFilter, matchFilter, showA, showB, showExotic]);
 
   return (
     <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-4">
@@ -118,38 +138,50 @@ export function DropLogPanel(props: DropLogPanelProps) {
             value={typeFilter}
             onChange={(v) => props.onTypeFilterChange(v as DropTypeFilter)}
           />
-          {weaponFilterRelevant && (
-            <div className="flex items-center gap-1">
-              <span className="text-text-muted mr-1">Grade</span>
-              <button
-                className="px-2 py-1 rounded bg-grade-s/20 text-grade-s border border-grade-s/50 cursor-not-allowed"
-                disabled
-                title="S grade always shown"
-              >
-                S
-              </button>
-              <button
-                onClick={props.onToggleA}
-                className={`px-2 py-1 rounded border ${
-                  showA
-                    ? 'bg-grade-a/20 text-grade-a border-grade-a/50'
-                    : 'bg-bg-primary text-text-muted border-bg-border'
-                }`}
-              >
-                A
-              </button>
-              <button
-                onClick={props.onToggleB}
-                className={`px-2 py-1 rounded border ${
-                  showB
-                    ? 'bg-grade-b/20 text-grade-b border-grade-b/50'
-                    : 'bg-bg-primary text-text-muted border-bg-border'
-                }`}
-              >
-                B
-              </button>
-            </div>
-          )}
+          <div className="flex items-center gap-1">
+            <span className="text-text-muted mr-1">Grade</span>
+            {weaponFilterRelevant && (
+              <>
+                <button
+                  className="px-2 py-1 rounded bg-grade-s/20 text-grade-s border border-grade-s/50 cursor-not-allowed"
+                  disabled
+                  title="S grade always shown"
+                >
+                  S
+                </button>
+                <button
+                  onClick={props.onToggleA}
+                  className={`px-2 py-1 rounded border ${
+                    showA
+                      ? 'bg-grade-a/20 text-grade-a border-grade-a/50'
+                      : 'bg-bg-primary text-text-muted border-bg-border'
+                  }`}
+                >
+                  A
+                </button>
+                <button
+                  onClick={props.onToggleB}
+                  className={`px-2 py-1 rounded border ${
+                    showB
+                      ? 'bg-grade-b/20 text-grade-b border-grade-b/50'
+                      : 'bg-bg-primary text-text-muted border-bg-border'
+                  }`}
+                >
+                  B
+                </button>
+              </>
+            )}
+            <button
+              onClick={props.onToggleExotic}
+              className={`px-2 py-1 rounded border ${
+                showExotic
+                  ? 'bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50'
+                  : 'bg-bg-primary text-text-muted border-bg-border'
+              }`}
+            >
+              Exotic
+            </button>
+          </div>
           {matchFilterRelevant && (
             <FilterGroup
               label="Match"
@@ -174,7 +206,12 @@ export function DropLogPanel(props: DropLogPanelProps) {
       ) : (
         <ul className="divide-y divide-bg-border">
           {visible.map((entry) => (
-            <DropLogRow key={entry.instanceId} entry={entry} nowTick={nowTick} />
+            <DropLogRow
+              key={entry.instanceId}
+              entry={entry}
+              nowTick={nowTick}
+              highlighted={entry.instanceId === highlightInstanceId}
+            />
           ))}
         </ul>
       )}
@@ -211,21 +248,40 @@ function FilterGroup<T extends string>(props: {
   );
 }
 
-function DropLogRow({ entry, nowTick }: { entry: DropFeedEntry; nowTick: number }) {
+function DropLogRow({
+  entry,
+  nowTick,
+  highlighted,
+}: {
+  entry: DropFeedEntry;
+  nowTick: number;
+  highlighted: boolean;
+}) {
   const isArmor = entry.itemType === 'armor';
+  const isMatchedArmor = isArmor && entry.armorMatched === true;
+  const isKeeperWeapon = !isArmor && entry.grade === 'S';
+  // Row bg encodes "worth your attention" — green for matched exotic armor,
+  // lavender for non-exotic keepers (matched armor + S-tier weapons). Exotic
+  // weapons and unmatched exotic armor get no tint; the yellow Ex chip
+  // already carries the rarity signal.
   const tinted = entry.isExotic
-    ? 'bg-grade-exotic/5 hover:bg-grade-exotic/10'
-    : isArmor
-      ? entry.armorMatched
-        ? 'bg-grade-s/5 hover:bg-grade-s/10'
-        : 'hover:bg-bg-border/40'
+    ? isMatchedArmor
+      ? 'bg-emerald-500/10 hover:bg-emerald-500/20'
+      : 'hover:bg-bg-border/40'
+    : isMatchedArmor || isKeeperWeapon
+      ? 'bg-grade-s/5 hover:bg-grade-s/10'
       : 'hover:bg-bg-border/40';
 
   const subtitle = isArmor ? buildArmorSubtitle(entry) : entry.weaponType ?? 'Weapon';
   const lockRelevant = (isArmor && entry.armorMatched === true) || entry.grade === 'S';
 
   return (
-    <li className={`py-2.5 flex items-center gap-3 px-2 rounded ${tinted}`}>
+    <li
+      data-instance-id={entry.instanceId}
+      className={`py-2.5 flex items-center gap-3 px-2 rounded ${tinted} ${
+        highlighted ? 'pulse-highlight' : ''
+      }`}
+    >
       {entry.itemIcon ? (
         <img
           src={entry.itemIcon}
@@ -248,7 +304,9 @@ function DropLogRow({ entry, nowTick }: { entry: DropFeedEntry; nowTick: number 
           <img key={i} src={icon} alt="" className="w-6 h-6 rounded" />
         ))}
       </div>
-      {isArmor ? (
+      {entry.isExotic ? (
+        <ExoticChip />
+      ) : isArmor ? (
         entry.armorMatched === null ? (
           <span className="w-6 h-6 inline-block" aria-hidden="true" />
         ) : (

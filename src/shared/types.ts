@@ -54,6 +54,27 @@ export interface AutolockFailedPayload {
   at: number;
 }
 
+// Popup filter chip state. Persisted so toggles survive popup close/reopen.
+// Grade array contains labels that are currently "on". S stays permanently
+// in the array (the UI renders S as a non-toggleable chip).
+export interface PopupFilterState {
+  grade: string[];
+  type: string[];
+}
+
+export const DEFAULT_POPUP_FILTER: PopupFilterState = {
+  grade: ['S', 'A', 'B', 'Exotic'],
+  type: ['Weapons', 'Armor'],
+};
+
+// Set by the popup when a user clicks a drop row, read by the Dashboard on
+// mount to select the right tab and scroll to / briefly highlight that row.
+// The Dashboard clears this key after consuming it.
+export interface PendingNavigation {
+  tab: 'drops' | 'rules';
+  instanceId?: string;
+}
+
 export interface ArmorTaxonomyPayload {
   sets: string[];
   archetypes: string[];

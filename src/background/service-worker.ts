@@ -23,14 +23,17 @@ import type { Message } from '@/shared/messaging';
 
 async function ensurePollAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(POLL_ALARM_NAME);
-  if (!existing) {
+  // Re-create if the registered period doesn't match the constant. Alarms
+  // persist across SW restarts, so a shipped change to POLL_PERIOD_MINUTES
+  // would otherwise be ignored until the user manually cleared the alarm.
+  if (!existing || existing.periodInMinutes !== POLL_PERIOD_MINUTES) {
     await chrome.alarms.create(POLL_ALARM_NAME, {
       periodInMinutes: POLL_PERIOD_MINUTES,
       // Fire the first poll one period after registration so we don't double-poll
       // right after install — the user hasn't signed in yet anyway.
       delayInMinutes: POLL_PERIOD_MINUTES,
     });
-    log('sw', 'poll alarm registered');
+    log('sw', 'poll alarm registered', POLL_PERIOD_MINUTES);
   }
 }
 
@@ -53,11 +56,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== POLL_ALARM_NAME) return;
   log('sw', 'alarm fired', alarm.name);
   void handlePollAlarm();
-});
-
-chrome.action.onClicked.addListener(() => {
-  // No popup in session 1 — clicking the toolbar icon opens the options page.
-  void chrome.runtime.openOptionsPage();
 });
 
 chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {

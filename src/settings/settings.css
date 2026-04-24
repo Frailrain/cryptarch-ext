@@ -31,3 +31,18 @@ body {
 ::-webkit-scrollbar-track {
   background: #0a0d12;
 }
+
+/* Pulse highlight used when navigating from the popup to a specific drop row.
+ * Rahool blue at low opacity fades to transparent over 1.5s. Plays on top of
+ * the row's static tint; after the animation the base bg takes over again. */
+@keyframes pulse-highlight {
+  0% {
+    background-color: rgba(127, 179, 213, 0.25);
+  }
+  100% {
+    background-color: rgba(127, 179, 213, 0);
+  }
+}
+.pulse-highlight {
+  animation: pulse-highlight 1.5s ease-out;
+}

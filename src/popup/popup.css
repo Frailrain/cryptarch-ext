@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Chrome sizes the popup from the body's natural dimensions. Fixing width at
+ * 360px and letting height auto-fit gives a predictable shape. The drop list
+ * scrolls internally when it overflows (see max-height below). */
+html,
+body {
+  width: 360px;
+  margin: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
+    'Open Sans', 'Helvetica Neue', sans-serif;
+}
+body {
+  /* Cap total height so even with the filter chips + header + toggle + button,
+   * the popup never exceeds what Chrome renders cleanly. */
+  max-height: 580px;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #23282f;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2e353d;
+}
+::-webkit-scrollbar-track {
+  background: #0a0d12;
+}

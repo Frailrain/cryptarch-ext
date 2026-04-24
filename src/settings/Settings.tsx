@@ -11,7 +11,12 @@ import { SessionExpiredBanner } from './components/SessionExpiredBanner';
 import { ManifestLoadingCard } from './components/ManifestLoadingCard';
 import { AutolockFailedBanner } from './components/AutolockFailedBanner';
 import type { ManifestProgress } from '@/core/bungie/manifest';
-import type { ArmorTaxonomyPayload, AutolockFailedPayload } from '@/shared/types';
+import type {
+  ArmorTaxonomyPayload,
+  AutolockFailedPayload,
+  PendingNavigation,
+} from '@/shared/types';
+import { removeItem } from '@/adapters/storage';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
 
 type Tab = 'drops' | 'rules';
@@ -29,6 +34,7 @@ export function Settings() {
   const [matchFilter, setMatchFilter] = useState<DropMatchFilter>('all');
   const [showA, setShowA] = useState(true);
   const [showB, setShowB] = useState(false);
+  const [showExotic, setShowExotic] = useState(true);
   const [authState, setAuthState] = useState<AuthState>(() => loadAuthState());
   const [expiredBannerDismissed, setExpiredBannerDismissed] = useState(false);
   const [manifestReady, setManifestReady] = useState<boolean>(
@@ -46,6 +52,7 @@ export function Settings() {
   const [autoLockOnArmorMatch, setAutoLockOnArmorMatch] = useState<boolean>(
     () => loadScoringConfig().autoLockOnArmorMatch,
   );
+  const [highlightInstanceId, setHighlightInstanceId] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubFeed = onKeyChanged<DropFeedEntry[]>('drop-feed', (value) => {
@@ -98,6 +105,29 @@ export function Settings() {
     const id = window.setInterval(() => setNowTick(Date.now()), 15_000);
     return () => window.clearInterval(id);
   }, []);
+
+  // Consume pendingNavigation (written by the popup when a user clicks a drop
+  // row). Switches tab, scrolls to the target row, briefly highlights it, then
+  // clears the storage key so a dashboard reload doesn't re-trigger.
+  useEffect(() => {
+    if (!manifestReady) return;
+    const nav = getItem<PendingNavigation>('pendingNavigation');
+    if (!nav) return;
+    removeItem('pendingNavigation');
+    setTab(nav.tab);
+    if (nav.instanceId) {
+      const id = nav.instanceId;
+      setHighlightInstanceId(id);
+      // Defer scroll until after React renders the tab change.
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`[data-instance-id="${CSS.escape(id)}"]`);
+        if (el instanceof HTMLElement) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+      const timer = window.setTimeout(() => setHighlightInstanceId(null), 1500);
+      return () => window.clearTimeout(timer);
+    }
+    return undefined;
+  }, [manifestReady]);
 
   // Fetch armor taxonomy (sets/archetypes/tertiaries) from the SW once the
   // manifest is ready. Cached at the Settings level so switching between
@@ -251,11 +281,14 @@ export function Settings() {
                   matchFilter={matchFilter}
                   showA={showA}
                   showB={showB}
+                  showExotic={showExotic}
                   nowTick={nowTick}
+                  highlightInstanceId={highlightInstanceId}
                   onTypeFilterChange={setTypeFilter}
                   onMatchFilterChange={setMatchFilter}
                   onToggleA={() => setShowA((v) => !v)}
                   onToggleB={() => setShowB((v) => !v)}
+                  onToggleExotic={() => setShowExotic((v) => !v)}
                 />
               </>
             )}

@@ -9,6 +9,7 @@ export default defineManifest({
     'Real-time god roll alerts for Destiny 2. Auto-locks keepers before you dismantle them.',
   action: {
     default_title: 'Cryptarch',
+    default_popup: 'src/popup/popup.html',
   },
   options_page: 'src/settings/settings.html',
   background: {
