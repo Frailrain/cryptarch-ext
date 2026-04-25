@@ -25,6 +25,14 @@ export type TierLetter = 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
 // One curated or user-added wishlist source. Stored in chrome.storage under
 // the wishlistSources key. The parsed entries live separately as
 // ImportedWishList[] keyed by source id.
+//
+// pveOriented / pvpOriented (Brief #12): orientation tags used by the roll-type
+// filter on the Weapons tab. A source can be both, neither, or one. Built-ins
+// flagged in known-sources.ts. Custom URLs default to neither — TODO future
+// brief: surface a checkbox in the custom-source-edit UI so users can self-tag.
+// pvpOriented currently has no UI consumer (no Strong PVP filter ships in #12,
+// no acceptable PVP source exists), but the field stays so a future PVP source
+// + filter doesn't need a schema migration.
 export interface WishlistSource {
   id: string;
   name: string;
@@ -32,7 +40,30 @@ export interface WishlistSource {
   enabled: boolean;
   builtin: boolean;
   description?: string;
+  pveOriented?: boolean;
+  pvpOriented?: boolean;
 }
+
+// Brief #12: top-level filter config exposed on the Weapons tab. Two
+// independent dimensions: tier (minimum quality threshold to notify on) and
+// roll-type (which kind of match counts).
+export type TierFilter = 'all' | TierLetter;
+
+// Roll-type filter options. PVP option deliberately absent — no acceptable
+// active PVP wishlist source exists as of Brief #12; see known-sources.ts.
+export type RollTypeFilter = 'all-matched' | 'strong-pve' | 'popular';
+
+export interface WeaponFilterConfig {
+  tierFilter: TierFilter;
+  rollTypeFilter: RollTypeFilter;
+}
+
+export const DEFAULT_WEAPON_FILTER: WeaponFilterConfig = {
+  // 'A' as the minimum threshold means notify on S or A tier — sensible
+  // default for users who enable Aegis sources without further configuration.
+  tierFilter: 'A',
+  rollTypeFilter: 'all-matched',
+};
 
 // One match between a drop and a wishlist source. A drop may have zero, one,
 // or many of these. weaponTier (Brief #12) is per-source because each source

@@ -12,6 +12,16 @@ import type { WishlistSource } from '@/shared/types';
 //
 // Sliflist (rslifka/sliflist) was retired — repo deleted by owner. Users who
 // want it back can paste a URL via the custom-source UI if it returns.
+//
+// Brief #12 note: no PVP source ships as a built-in. The two best-known
+// candidates (PandaPaxxy and Mercules904) live as subfolders inside the
+// 48klocs repo, but their files target seasons through Haunted (S17, mid-2022)
+// and haven't been updated since 2025-04 (>1 year stale, outside the brief's
+// 6-month threshold). The only recently-touched candidate found
+// (abdulazizfahad97-web/azyz-dim-wishlists/pvp.txt) ships DIM search-bar
+// filters rather than dimwishlist:item= entries — wrong format, doesn't
+// parse. Revisit when PandaPaxxy returns or another active curator emerges.
+// Users with their own PVP wishlist can add it via the custom URL form.
 export const BUILTIN_WISHLIST_SOURCES: WishlistSource[] = [
   {
     id: 'voltron',
@@ -21,6 +31,8 @@ export const BUILTIN_WISHLIST_SOURCES: WishlistSource[] = [
     builtin: true,
     description:
       'The default community wishlist. Broad "god roll" coverage by pandapaxxy, mercules904, and HavocsCall.',
+    pveOriented: false,
+    pvpOriented: false,
   },
   {
     id: 'choosy-voltron',
@@ -30,6 +42,8 @@ export const BUILTIN_WISHLIST_SOURCES: WishlistSource[] = [
     builtin: true,
     description:
       'Voltron plus opinionated "trash" rolls. Helps identify rolls you should dismantle.',
+    pveOriented: false,
+    pvpOriented: false,
   },
   {
     id: 'aegis-endgame',
@@ -39,6 +53,8 @@ export const BUILTIN_WISHLIST_SOURCES: WishlistSource[] = [
     builtin: true,
     description:
       "Endgame-focused rolls from Aegis's spreadsheets. More selective than Voltron.",
+    pveOriented: true,
+    pvpOriented: false,
   },
   {
     id: 'aegis-exclusive',
@@ -48,5 +64,7 @@ export const BUILTIN_WISHLIST_SOURCES: WishlistSource[] = [
     builtin: true,
     description:
       'The most selective subset of Aegis Endgame — ~3.1k rolls vs ~9k in the main list. For users who want the strictest filtering.',
+    pveOriented: true,
+    pvpOriented: false,
   },
 ];
