@@ -124,19 +124,22 @@ export function DropLogPanel(props: DropLogPanelProps) {
 
   const visible = useMemo(() => {
     return feed.filter((e) => {
-      // Test drops appended by the Wishlist matcher test panel always show,
-      // regardless of grade/type filters. The "[Test]" name prefix already
-      // distinguishes them visually; if the user filtered to armor or hid B
-      // grade, the test affordance would be misleading otherwise.
-      if (e.instanceId.startsWith('debug-test-')) return true;
+      const isTestDrop = e.instanceId.startsWith('debug-test-');
+
+      // Test drops bypass type / grade / exotic filters so the test affordance
+      // doesn't hide its own output. They DO respect the tier filter — otherwise
+      // there's no way to verify tier filtering via the in-page test panel.
+      if (isTestDrop) {
+        if (e.weaponTier && !visibleTiers.has(e.weaponTier)) return false;
+        return true;
+      }
+
       if (typeFilter !== 'all' && e.itemType !== typeFilter) return false;
-      // Exotics are a separate bucket from S/A/B — they check the Exotic
-      // filter only, not the letter-grade filters.
       if (e.isExotic) return showExotic;
       if (e.itemType === 'weapon') {
         if (e.grade === 'S') {
           // S-grade always passes the grade gate; tier filter still applies
-          // when the drop has tier metadata.
+          // below when the drop has tier metadata.
         } else if (e.grade === 'A') {
           if (!showA) return false;
         } else if (e.grade === 'B') {

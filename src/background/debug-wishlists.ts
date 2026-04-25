@@ -19,17 +19,33 @@
 // and ad-hoc verification stays useful past Brief #11. Remove if SW console
 // attack surface ever becomes a concern.
 
-import { ItemType, type NewItemDrop, type WishlistMatch } from '@/shared/types';
+import { ItemType, type NewItemDrop, type TierLetter, type WishlistMatch } from '@/shared/types';
 import { scoreItem } from '@/core/scoring/engine';
 import { loadScoringConfig, loadWishlistSources } from '@/core/storage/scoring-config';
 import { getAllCachedLists, ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { getEnhancedPerkMap, getManifest } from '@/core/bungie/manifest';
 import type { Grade } from '@/core/scoring/types';
 
-interface MultiSourceItem {
+// Local copy of tier ranking used to compute the best (lowest-index) tier
+// across multiple matching entries when scanning candidates in
+// findMultiSourceItems. Mirrors TIER_ORDER in matcher.ts.
+const TIER_RANK_LOCAL: Record<TierLetter, number> = {
+  S: 0,
+  A: 1,
+  B: 2,
+  C: 3,
+  D: 4,
+  F: 5,
+};
+
+export interface MultiSourceItem {
   itemHash: number;
   sources: string[];
   samplePerks: number[];
+  // Brief #12: best tier across the matching keeper entries for this item
+  // (best = lowest TIER_RANK index, i.e. S beats A). Absent when no matching
+  // entry carries weaponTier metadata.
+  bestTier?: TierLetter;
 }
 
 interface TestMatchOutcome {
@@ -117,35 +133,61 @@ async function findMultiSourceItems(
   );
   const lists = getAllCachedLists().filter((l) => enabledIds.has(l.id));
 
-  // itemHash → { sources: Set, perks: number[] }
-  const groups = new Map<number, { sources: Set<string>; perks: number[] }>();
+  interface Group {
+    sources: Set<string>;
+    perks: number[];
+    bestTierIdx: number;
+    bestTier?: TierLetter;
+  }
+  const groups = new Map<number, Group>();
 
   for (const list of lists) {
     // Track first-seen-keeper-entry per (list, itemHash) so we don't double-count
-    // a list that has multiple entries for the same hash.
+    // a list that has multiple entries for the same hash. Note: tier tracking
+    // does need to consider all entries in the list (different rolls may have
+    // different tier annotations), so we do tier comparison BEFORE this dedupe
+    // check below.
     const seenInList = new Set<number>();
     for (const entry of list.entries) {
       if (entry.isTrash) continue;
       if (entry.itemHash === -1) continue; // skip catch-all entries
-      if (seenInList.has(entry.itemHash)) continue;
-      seenInList.add(entry.itemHash);
 
       let group = groups.get(entry.itemHash);
       if (!group) {
-        group = { sources: new Set(), perks: entry.requiredPerks };
+        group = {
+          sources: new Set(),
+          perks: entry.requiredPerks,
+          bestTierIdx: 99,
+          bestTier: undefined,
+        };
         groups.set(entry.itemHash, group);
       }
+
+      // Improve tier from any entry encountered (best across all matching
+      // entries across all lists wins).
+      if (entry.weaponTier) {
+        const idx = TIER_RANK_LOCAL[entry.weaponTier];
+        if (idx < group.bestTierIdx) {
+          group.bestTierIdx = idx;
+          group.bestTier = entry.weaponTier;
+        }
+      }
+
+      // Source dedup applies after tier consideration.
+      if (seenInList.has(entry.itemHash)) continue;
+      seenInList.add(entry.itemHash);
       group.sources.add(list.id);
     }
   }
 
   const out: MultiSourceItem[] = [];
-  for (const [itemHash, { sources, perks }] of groups) {
-    if (sources.size < minSources) continue;
+  for (const [itemHash, group] of groups) {
+    if (group.sources.size < minSources) continue;
     out.push({
       itemHash,
-      sources: Array.from(sources),
-      samplePerks: perks,
+      sources: Array.from(group.sources),
+      samplePerks: group.perks,
+      bestTier: group.bestTier,
     });
     if (out.length >= limit) break;
   }

@@ -114,10 +114,13 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         // and cacheSummary now, but call it here too so the diagnostic snapshot
         // below sees the same warm cache the discovery does.
         await ensureWishlistCacheReady();
-        const candidates = await findMultiSourceItems(2, 1);
+        // Pull a large pool of candidates so we can show variety across tiers.
+        // Each click of "Run multi-source test" buckets candidates by their
+        // best tier and picks a random non-empty bucket → random candidate.
+        // This exercises the tier filter naturally over a few clicks instead
+        // of always producing an S-tier drop.
+        const candidates = await findMultiSourceItems(2, 500);
         if (candidates.length === 0) {
-          // Include diagnostic snapshot so the UI can show why discovery came
-          // up empty without sending the user to the SW console.
           const summary = await cacheSummary();
           sendResponse({
             ok: true,
@@ -130,7 +133,17 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
           });
           return;
         }
-        const candidate = candidates[0];
+        const buckets = new Map<string, typeof candidates>();
+        for (const c of candidates) {
+          const key = c.bestTier ?? 'untiered';
+          const existing = buckets.get(key);
+          if (existing) existing.push(c);
+          else buckets.set(key, [c]);
+        }
+        const bucketKeys = Array.from(buckets.keys());
+        const pickedKey = bucketKeys[Math.floor(Math.random() * bucketKeys.length)];
+        const bucket = buckets.get(pickedKey)!;
+        const candidate = bucket[Math.floor(Math.random() * bucket.length)];
         const outcome = await testMatch(candidate.itemHash, candidate.samplePerks);
         let itemName: string | null = null;
         let itemIcon = '';
