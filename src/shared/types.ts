@@ -143,7 +143,9 @@ export const DEFAULT_POPUP_FILTER: PopupFilterState = {
 // mount to select the right tab and scroll to / briefly highlight that row.
 // The Dashboard clears this key after consuming it.
 export interface PendingNavigation {
-  tab: 'drops' | 'rules' | 'wishlists';
+  // Brief #12 renamed: 'rules' → 'armor', 'wishlists' → 'weapons'. Stale stored
+  // values from before the rename are migrated at consume time in Settings.tsx.
+  tab: 'drops' | 'armor' | 'weapons';
   instanceId?: string;
 }
 

@@ -21,7 +21,27 @@ import type {
 import { removeItem } from '@/adapters/storage';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
 
-type Tab = 'drops' | 'rules' | 'wishlists';
+// Brief #12: tab labels reorganized to put weapon configuration on equal
+// footing with armor. "Rules" → "Armor", "Wishlists" folded into "Weapons".
+// Component filenames (RulesPanel, WishlistsPanel) deliberately kept — the
+// internal naming reflects what the components manage (armor rules / wishlist
+// sources), the tab labels reflect the user-facing mental model (Armor /
+// Weapons). Renaming the files would have churned ~100 lines of imports for
+// no functional benefit.
+type Tab = 'drops' | 'armor' | 'weapons';
+
+// Migrate pre-#12 pendingNavigation values written by an older popup before
+// the tab rename. Returns null if the stored value is missing or unrecognized.
+function loadAndMigratePendingNavigation(): PendingNavigation | null {
+  const raw = getItem<{ tab: string; instanceId?: string }>('pendingNavigation');
+  if (!raw) return null;
+  const migrated =
+    raw.tab === 'rules' ? 'armor' : raw.tab === 'wishlists' ? 'weapons' : raw.tab;
+  if (migrated !== 'drops' && migrated !== 'armor' && migrated !== 'weapons') {
+    return null;
+  }
+  return { tab: migrated, instanceId: raw.instanceId };
+}
 
 export function Settings() {
   const [signedIn, setSignedIn] = useState<boolean>(() => isLoggedIn());
@@ -113,7 +133,7 @@ export function Settings() {
   // clears the storage key so a dashboard reload doesn't re-trigger.
   useEffect(() => {
     if (!manifestReady) return;
-    const nav = getItem<PendingNavigation>('pendingNavigation');
+    const nav = loadAndMigratePendingNavigation();
     if (!nav) return;
     removeItem('pendingNavigation');
     setTab(nav.tab);
@@ -266,11 +286,11 @@ export function Settings() {
               <TabButton active={tab === 'drops'} onClick={() => setTab('drops')}>
                 Drops
               </TabButton>
-              <TabButton active={tab === 'rules'} onClick={() => setTab('rules')}>
-                Rules
+              <TabButton active={tab === 'armor'} onClick={() => setTab('armor')}>
+                Armor
               </TabButton>
-              <TabButton active={tab === 'wishlists'} onClick={() => setTab('wishlists')}>
-                Wishlists
+              <TabButton active={tab === 'weapons'} onClick={() => setTab('weapons')}>
+                Weapons
               </TabButton>
             </nav>
 
@@ -308,7 +328,7 @@ export function Settings() {
               </>
             )}
 
-            {tab === 'rules' && (
+            {tab === 'armor' && (
               <RulesPanel
                 taxonomy={taxonomy}
                 autoLockOnArmorMatch={autoLockOnArmorMatch}
@@ -316,7 +336,7 @@ export function Settings() {
               />
             )}
 
-            {tab === 'wishlists' && <WishlistsPanel />}
+            {tab === 'weapons' && <WishlistsPanel />}
           </>
         )}
 
