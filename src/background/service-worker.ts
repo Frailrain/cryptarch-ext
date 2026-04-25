@@ -30,6 +30,7 @@ import { lookupItem } from '@/core/bungie/manifest';
 import { appendToFeed } from '@/core/storage/drop-feed';
 import type { DropFeedEntry, WishlistMatch } from '@/shared/types';
 import type { Grade } from '@/core/scoring/types';
+import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 
 async function ensurePollAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(POLL_ALARM_NAME);
@@ -107,6 +108,11 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         return;
       }
       if (msg.type === 'wishlist-test-multi-source') {
+        // Hydrate the wishlist cache before discovery — this handler doesn't go
+        // through handlePollAlarm, so on a fresh worker wake the in-memory Map
+        // is empty until we ask for it. Without this await, findMultiSourceItems
+        // would always return [] on first invocation per wake.
+        await ensureWishlistCacheReady();
         // Find a hash flagged by 2+ enabled sources, then run it through the
         // matcher. Empty result is a real, expected outcome — surface it
         // explicitly so the UI can guide the user.

@@ -107,6 +107,11 @@ export function DropLogPanel(props: DropLogPanelProps) {
 
   const visible = useMemo(() => {
     return feed.filter((e) => {
+      // Test drops appended by the Wishlist matcher test panel always show,
+      // regardless of grade/type filters. The "[Test]" name prefix already
+      // distinguishes them visually; if the user filtered to armor or hid B
+      // grade, the test affordance would be misleading otherwise.
+      if (e.instanceId.startsWith('debug-test-')) return true;
       if (typeFilter !== 'all' && e.itemType !== typeFilter) return false;
       // Exotics are a separate bucket from S/A/B — they check the Exotic
       // filter only, not the letter-grade filters.
