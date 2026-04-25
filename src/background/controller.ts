@@ -30,6 +30,7 @@ import { scoreItem } from '@/core/scoring/engine';
 import { loadArmorRules } from '@/core/rules/armor-rules';
 import { loadScoringConfig } from '@/core/storage/scoring-config';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
+import { resolveBestTier } from '@/core/wishlists/matcher';
 import {
   appendToFeed,
   getFeedEntry,
@@ -321,6 +322,13 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
       // chaining downstream. UI treats absent and empty as equivalent.
       wishlistMatches:
         result.wishlistMatches.length > 0 ? result.wishlistMatches : undefined,
+      // Brief #12: best tier across this drop's matches, resolved once at
+      // capture time so renderers and the notification filter don't recompute.
+      // Absent when no match has tier data (Voltron-only drops, custom URLs).
+      weaponTier:
+        result.wishlistMatches.length > 0
+          ? resolveBestTier(result.wishlistMatches)
+          : undefined,
     };
     appendToFeed(entry);
     markFirstSeen(entry.instanceId, drop.detectedAt);

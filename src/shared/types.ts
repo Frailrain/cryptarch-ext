@@ -35,12 +35,16 @@ export interface WishlistSource {
 }
 
 // One match between a drop and a wishlist source. A drop may have zero, one,
-// or many of these. Brief #12 may add: parsedMetadata?: { weaponTier?: string;
-// perksMatched?: number } — keep this shape extensible.
+// or many of these. weaponTier (Brief #12) is per-source because each source
+// may rate the same weapon differently — drop-level resolution to a single
+// canonical tier happens in resolveBestTier (matcher.ts) and is persisted to
+// DropFeedEntry.weaponTier. Sources without tier metadata (Voltron entries
+// with non-Aegis-style notes, custom URLs, etc.) leave this absent.
 export interface WishlistMatch {
   sourceId: string;
   sourceName: string;
   notes?: string;
+  weaponTier?: TierLetter;
 }
 
 export interface DropFeedEntry {
@@ -74,6 +78,10 @@ export interface DropFeedEntry {
   // Wishlist sources that flagged this drop. Absent on drops captured before
   // Brief #11 — UI must guard with optional chaining.
   wishlistMatches?: WishlistMatch[];
+  // Brief #12: best tier across all wishlistMatches (S > A > B > C > D > F).
+  // Resolved at drop time via resolveBestTier so renderers don't recompute per
+  // frame. Absent when no match has tier metadata or when drops are pre-#12.
+  weaponTier?: TierLetter;
 }
 
 export interface DropLockUpdatedPayload {

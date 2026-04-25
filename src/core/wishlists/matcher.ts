@@ -1,7 +1,32 @@
-import type { NewItemDrop, WishlistMatch } from '@/shared/types';
+import type { NewItemDrop, TierLetter, WishlistMatch } from '@/shared/types';
 import type { ImportedWishList, WishListEntry } from '@/core/scoring/types';
 import { loadWishlistSources } from '@/core/storage/scoring-config';
 import { getAllCachedLists } from './cache';
+
+// Tier ordering: index 0 is best (S), index 5 is worst (F). resolveBestTier
+// uses indexOf so a drop with matches at A and C resolves to A.
+const TIER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
+
+/**
+ * Resolve the canonical drop-level tier from a set of per-source matches.
+ * Picks the highest tier (S beats A, A beats B, ...) across matches that
+ * have weaponTier set. Matches without tier data are skipped.
+ *
+ * Returns undefined when no match carries tier data — typical for drops
+ * matched only by Voltron entries that don't reference an Aegis tier in
+ * their notes. Tier filtering treats undefined as below-F (does not pass
+ * any letter threshold), see Brief #12 Part C.
+ */
+export function resolveBestTier(matches: WishlistMatch[]): TierLetter | undefined {
+  let bestIdx: number | null = null;
+  for (const m of matches) {
+    if (!m.weaponTier) continue;
+    const idx = TIER_ORDER.indexOf(m.weaponTier);
+    if (idx === -1) continue;
+    if (bestIdx === null || idx < bestIdx) bestIdx = idx;
+  }
+  return bestIdx === null ? undefined : TIER_ORDER[bestIdx];
+}
 
 /**
  * Result returned to the scoring engine. Two shapes in one envelope because
@@ -88,6 +113,7 @@ export function matchDropAgainstWishlists(
         sourceId: list.id,
         sourceName: list.name,
         notes: perListResult.keeper.notes ? perListResult.keeper.notes : undefined,
+        weaponTier: perListResult.keeper.weaponTier,
       });
       if (!firstKeeper) {
         firstKeeper = { entry: perListResult.keeper, sourceName: list.name };

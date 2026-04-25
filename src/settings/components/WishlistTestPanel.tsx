@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { Grade, WishlistMatch } from '@/shared/types';
+import type { Grade, TierLetter, WishlistMatch } from '@/shared/types';
 import { send } from '@/shared/messaging';
 
 // In-page wrapper around the cryptarchDebug.testMatch / testFallback console
@@ -22,6 +22,7 @@ type MultiSourcePayload =
       itemName: string | null;
       grade: Grade | null;
       wishlistMatches: WishlistMatch[];
+      weaponTier?: TierLetter;
       reasons: string[];
       perks: number[];
     }
@@ -152,6 +153,11 @@ function MultiSourceResultView({ data }: { data: MultiSourcePayload }) {
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-medium text-text-primary">{itemDisplay}</span>
         <GradeChip grade={data.grade} />
+        {data.weaponTier && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded border border-bg-border text-text-primary">
+            Tier {data.weaponTier}
+          </span>
+        )}
       </div>
 
       {data.wishlistMatches.length > 0 ? (
@@ -161,6 +167,9 @@ function MultiSourceResultView({ data }: { data: MultiSourcePayload }) {
             {data.wishlistMatches.map((m) => (
               <li key={m.sourceId} className="text-text-primary">
                 <span className="text-rahool-blue">{m.sourceName}</span>
+                {m.weaponTier && (
+                  <span className="text-text-muted"> [Tier {m.weaponTier}]</span>
+                )}
                 {m.notes && <span className="text-text-muted"> — {m.notes}</span>}
               </li>
             ))}

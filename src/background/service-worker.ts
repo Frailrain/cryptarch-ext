@@ -29,9 +29,10 @@ import {
 } from './debug-wishlists';
 import { lookupItem } from '@/core/bungie/manifest';
 import { appendToFeed } from '@/core/storage/drop-feed';
-import type { DropFeedEntry, WishlistMatch } from '@/shared/types';
+import type { DropFeedEntry, TierLetter, WishlistMatch } from '@/shared/types';
 import type { Grade } from '@/core/scoring/types';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
+import { resolveBestTier } from '@/core/wishlists/matcher';
 
 async function ensurePollAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(POLL_ALARM_NAME);
@@ -151,6 +152,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         } catch {
           // Manifest not ready or hash absent — UI falls back to hash; perks just empty.
         }
+        const resolvedTier = resolveBestTier(outcome.wishlistMatches);
         appendTestDropToFeed({
           itemName: itemName ? `[Test] ${itemName}` : `[Test] item ${candidate.itemHash}`,
           itemIcon,
@@ -158,6 +160,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
           grade: outcome.grade,
           wishlistMatches: outcome.wishlistMatches,
           perkIcons,
+          weaponTier: resolvedTier,
         });
         sendResponse({
           ok: true,
@@ -167,6 +170,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
             itemName,
             grade: outcome.grade,
             wishlistMatches: outcome.wishlistMatches,
+            weaponTier: resolvedTier,
             reasons: outcome.reasons,
             perks: candidate.samplePerks,
           },
@@ -227,6 +231,7 @@ function appendTestDropToFeed(input: {
   grade: Grade | null;
   wishlistMatches: WishlistMatch[];
   perkIcons?: string[];
+  weaponTier?: TierLetter;
 }): void {
   const entry: DropFeedEntry = {
     instanceId: `debug-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -247,6 +252,7 @@ function appendTestDropToFeed(input: {
     isExotic: false,
     wishlistMatches:
       input.wishlistMatches.length > 0 ? input.wishlistMatches : undefined,
+    weaponTier: input.weaponTier,
   };
   appendToFeed(entry);
 }
