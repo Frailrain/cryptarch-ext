@@ -8,11 +8,13 @@ import { BUILTIN_WISHLIST_SOURCES } from '@/core/wishlists/known-sources';
 import {
   DEFAULT_WEAPON_FILTER,
   type WeaponFilterConfig,
+  type WishlistMetadata,
   type WishlistSource,
 } from '@/shared/types';
 
 const SCORING_CONFIG_KEY = 'scoring-config';
 const WISHLISTS_KEY = 'wishlists';
+const WISHLIST_METADATA_KEY = 'wishlistMetadata';
 const WISHLIST_SOURCES_KEY = 'wishlistSources';
 const WEAPON_FILTER_KEY = 'weaponFilterConfig';
 
@@ -42,8 +44,43 @@ export function loadWishlists(): ImportedWishList[] {
   return getItem<ImportedWishList[]>(WISHLISTS_KEY) ?? [];
 }
 
+// Brief #12.5 Part D: every saveWishlists write also derives and persists the
+// lightweight metadata view, keeping the two storage keys in sync without
+// callers having to remember. The settings page reads metadata-only and
+// avoids pulling 60 MB of parsed entries through IPC.
 export function saveWishlists(lists: ImportedWishList[]): void {
   setItem<ImportedWishList[]>(WISHLISTS_KEY, lists);
+  setItem<WishlistMetadata[]>(
+    WISHLIST_METADATA_KEY,
+    lists.map((l) => ({
+      id: l.id,
+      name: l.name,
+      sourceUrl: l.sourceUrl,
+      entryCount: l.entryCount,
+      importedAt: l.importedAt,
+    })),
+  );
+}
+
+// Brief #12.5 Part D: settings page reads this instead of loadWishlists.
+// One-time migration: if the wishlistMetadata key isn't present (existing
+// users upgrading), derive it from the full wishlists payload and persist.
+// This costs the upgrade user one slow read on the first call; future calls
+// are instant.
+export function loadWishlistMetadata(): WishlistMetadata[] {
+  const stored = getItem<WishlistMetadata[]>(WISHLIST_METADATA_KEY);
+  if (stored) return stored;
+  const fullLists = loadWishlists();
+  if (fullLists.length === 0) return [];
+  const derived: WishlistMetadata[] = fullLists.map((l) => ({
+    id: l.id,
+    name: l.name,
+    sourceUrl: l.sourceUrl,
+    entryCount: l.entryCount,
+    importedAt: l.importedAt,
+  }));
+  setItem<WishlistMetadata[]>(WISHLIST_METADATA_KEY, derived);
+  return derived;
 }
 
 // Lazy default: if nothing is stored, return a fresh copy of the builtins

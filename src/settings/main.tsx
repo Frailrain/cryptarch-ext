@@ -4,11 +4,12 @@ import { ensureLoadedSubset } from '@/adapters/storage';
 import { Settings } from './Settings';
 import './settings.css';
 
-// Every key the dashboard's initial render reads. Deliberately excludes
-// `wishlists` (~60 MB+ of parsed entries) — only WishlistsPanel needs that,
-// and it lazy-loads via loadAdditionalKeys when the user opens the tab.
-// Including it in the boot subset would re-introduce the multi-second
-// cold-load lag the popup already eliminated.
+// Every key the dashboard's initial render reads. Deliberately excludes the
+// `wishlists` key (~60 MB+ of parsed entries) — only the SW's matcher needs
+// the full payload. Brief #12.5 Part D added the lightweight wishlistMetadata
+// view (name + entryCount + importedAt per source); the Weapons-tab
+// WishlistsPanel reads that for display, eliminating the multi-second freeze
+// that previously hit the dashboard on first Weapons-tab open.
 const DASHBOARD_STORAGE_KEYS = [
   'drop-feed',
   'auth.tokens',
@@ -21,6 +22,7 @@ const DASHBOARD_STORAGE_KEYS = [
   'pendingNavigation',
   'armor-rules',
   'wishlistSources',
+  'wishlistMetadata',
 ];
 
 async function bootstrap() {

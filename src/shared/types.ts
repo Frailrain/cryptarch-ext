@@ -24,6 +24,24 @@ export interface InventoryPollStatus {
 // Brief #12 introduces this; per-weapon, not per-roll.
 export type TierLetter = 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
 
+// Brief #12.5 Part D: lightweight metadata derived from the per-source
+// ImportedWishList. UI only needs name + entry count + last-updated for
+// display; carrying the full entries array (60 MB+ combined for 4 sources)
+// through chrome.storage IPC into the settings page context was the source
+// of the multi-second freeze on first Weapons tab open.
+//
+// Stored under its own key (wishlistMetadata) so the settings page subset
+// can include it without dragging in the heavy entries blob. Kept in sync
+// with saveWishlists writes — they're a derived view, not a separate source
+// of truth.
+export interface WishlistMetadata {
+  id: string;
+  name: string;
+  sourceUrl: string | null;
+  entryCount: number;
+  importedAt: number;
+}
+
 // One curated or user-added wishlist source. Stored in chrome.storage under
 // the wishlistSources key. The parsed entries live separately as
 // ImportedWishList[] keyed by source id.

@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { WishlistSource } from '@/shared/types';
-import type { ImportedWishList } from '@/core/scoring/types';
+import type { WishlistMetadata, WishlistSource } from '@/shared/types';
 import {
+  loadWishlistMetadata,
   loadWishlistSources,
   saveWishlistSources,
-  loadWishlists,
 } from '@/core/storage/scoring-config';
-import { loadAdditionalKeys, onKeyChanged } from '@/adapters/storage';
+import { onKeyChanged } from '@/adapters/storage';
 import { refreshOne, refreshWishlists, validateWishlistUrl } from '@/core/wishlists/fetch';
 
 // Per-source UI state machine. The persisted FetchStatus in cache.ts only lives
@@ -19,7 +18,14 @@ type RowState =
 
 export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } = {}) {
   const [sources, setSources] = useState<WishlistSource[]>(() => loadWishlistSources());
-  const [cachedLists, setCachedLists] = useState<ImportedWishList[]>(() => loadWishlists());
+  // Brief #12.5 Part D: was loadWishlists() (60 MB+ payload). Now reads the
+  // lightweight metadata view — same display fields (name, entry count,
+  // last-updated), no entries array. Migration in loadWishlistMetadata
+  // derives the metadata from the full payload on first call for upgraded
+  // users; subsequent calls are sync hits on the wishlistMetadata key.
+  const [cachedLists, setCachedLists] = useState<WishlistMetadata[]>(() =>
+    loadWishlistMetadata(),
+  );
   const [rowStates, setRowStates] = useState<Map<string, RowState>>(new Map());
   const [refreshAllPending, setRefreshAllPending] = useState(false);
   const [refreshAllToast, setRefreshAllToast] = useState<string | null>(null);
@@ -31,11 +37,12 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
   const [validating, setValidating] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  // Cross-context sync: SW background refresh writes to the wishlists key when a
-  // fetch lands. Subscribing here lets the UI reflect the new entry counts and
-  // last-updated timestamps without a manual refresh.
+  // Cross-context sync: SW background refresh writes both the wishlists key
+  // and the lightweight wishlistMetadata key. Subscribing to metadata here
+  // lets the UI update without ever pulling the 60 MB+ entries payload into
+  // the settings page context.
   useEffect(() => {
-    const unsub1 = onKeyChanged<ImportedWishList[]>('wishlists', (v) => {
+    const unsub1 = onKeyChanged<WishlistMetadata[]>('wishlistMetadata', (v) => {
       setCachedLists(v ?? []);
     });
     const unsub2 = onKeyChanged<WishlistSource[]>('wishlistSources', (v) => {
@@ -54,27 +61,17 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
     return () => window.clearInterval(id);
   }, []);
 
-  // On mount: lazy-load the wishlists storage key (excluded from the dashboard
-  // boot subset to keep first paint fast), then kick a stale-only refresh.
-  // The 24h staleness check inside refreshOne short-circuits sources that are
-  // still fresh, so opening the tab repeatedly is cheap.
+  // On mount: kick a stale-only refresh. The 24h staleness check inside
+  // refreshOne short-circuits sources that are still fresh, so opening the
+  // tab repeatedly is cheap. The settings page no longer needs to lazy-load
+  // the full wishlists payload — metadata is enough for display, and the
+  // matcher (in SW) loads its own copy.
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      await loadAdditionalKeys(['wishlists']);
-      if (cancelled) return;
-      // Refresh state from the now-populated cache so entry counts and
-      // last-updated timestamps render on this tab's first paint.
-      setCachedLists(loadWishlists());
-      void refreshWishlists(loadWishlistSources()).catch(() => {});
-    })();
-    return () => {
-      cancelled = true;
-    };
+    void refreshWishlists(loadWishlistSources()).catch(() => {});
   }, []);
 
   const cacheById = useMemo(() => {
-    const m = new Map<string, ImportedWishList>();
+    const m = new Map<string, WishlistMetadata>();
     for (const list of cachedLists) m.set(list.id, list);
     return m;
   }, [cachedLists]);
@@ -107,7 +104,7 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
           result.ok ? { kind: 'idle' } : { kind: 'error', message: result.error ?? 'Fetch failed' },
         );
         // Pick up new entry count immediately even if onKeyChanged hasn't fired.
-        setCachedLists(loadWishlists());
+        setCachedLists(loadWishlistMetadata());
       }
     },
     [sources, persistSources, setRowState],
@@ -121,7 +118,7 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
         source.id,
         result.ok ? { kind: 'idle' } : { kind: 'error', message: result.error ?? 'Fetch failed' },
       );
-      setCachedLists(loadWishlists());
+      setCachedLists(loadWishlistMetadata());
     },
     [setRowState],
   );
@@ -140,7 +137,7 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
           : { kind: 'error', message: result.error ?? 'Fetch failed' },
       );
     }
-    setCachedLists(loadWishlists());
+    setCachedLists(loadWishlistMetadata());
     setRefreshAllPending(false);
     const okCount = results.filter((r) => r.ok).length;
     const failCount = results.length - okCount;
@@ -193,7 +190,7 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
         ? { kind: 'idle' }
         : { kind: 'error', message: fetchResult.error ?? 'Fetch failed' },
     );
-    setCachedLists(loadWishlists());
+    setCachedLists(loadWishlistMetadata());
   }, [newUrl, newName, sources, persistSources, setRowState]);
 
   const handleDeleteCustom = useCallback(
@@ -202,15 +199,16 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
       if (!ok) return;
       const next = sources.filter((s) => s.id !== source.id);
       persistSources(next);
-      // Also clear the cached parsed list for this source to avoid stale entries
-      // continuing to score after the user removed the source.
-      const remainingCache = loadWishlists().filter((l) => l.id !== source.id);
-      // Reuse saveWishlists indirectly via the cache module would be cleaner, but
-      // a direct write keeps this delete self-contained in the panel. The SW will
-      // re-hydrate from this on its next wake.
+      // Cache cleanup: pull the full wishlists payload (the only place
+      // WishlistsPanel still loads the heavy 60 MB blob — acceptable for a
+      // rare user-initiated delete), filter, re-save. saveWishlists writes
+      // both the wishlists key and the lightweight metadata key, so the
+      // metadata onChanged listener picks up the change and refreshes the
+      // displayed cache rows. The SW will re-hydrate its in-memory map on
+      // next wake.
       void import('@/core/storage/scoring-config').then((mod) => {
-        mod.saveWishlists(remainingCache);
-        setCachedLists(remainingCache);
+        const remaining = mod.loadWishlists().filter((l) => l.id !== source.id);
+        mod.saveWishlists(remaining);
       });
     },
     [sources, persistSources],
@@ -347,7 +345,7 @@ function SourceRow({
   onRename,
 }: {
   source: WishlistSource;
-  cachedList: ImportedWishList | undefined;
+  cachedList: WishlistMetadata | undefined;
   rowState: RowState;
   nowTick: number;
   onToggle: (enabled: boolean) => void;
