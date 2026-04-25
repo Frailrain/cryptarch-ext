@@ -74,13 +74,9 @@ export interface CustomRule {
   isCrafted?: boolean;
 }
 
-export type AlertThreshold = 'S' | 'SA' | 'all';
-
-// Brief #12.5: NotificationThreshold removed. WeaponFilterConfig (tier +
-// roll-type, on the Weapons tab) replaced the legacy grade threshold for
-// weapon notifications in Brief #12 Part H; armor and exotic notifications
-// never used a threshold. Field, type, and the maybeNotify `threshold`
-// param all gone.
+// Brief #12.5: NotificationThreshold removed (Part B), AlertThreshold removed
+// (Part C — only consumer was shouldAlert which had zero readers anywhere).
+// WeaponFilterConfig on the Weapons tab is the canonical notification gate now.
 
 // Brief #11 Part D: `wishlists: ImportedWishList[]` removed. The matcher now
 // reads from the wishlist cache (src/core/wishlists/cache.ts) directly, so
@@ -89,19 +85,23 @@ export type AlertThreshold = 'S' | 'SA' | 'all';
 export interface ScoringConfig {
   customRules: CustomRule[];
   armorRules: ArmorRule[];
-  alertThreshold: AlertThreshold;
   autoLockOnArmorMatch: boolean;
   excludeCrafted: boolean;
 }
 
+// Brief #12.5 Part C: `grade` and `shouldAlert` removed. Grade was a per-roll
+// quality letter (S/A/B/C/D/F) that conflated "matched a wishlist" with "rarity
+// fallback"; Brief #12 split those into wishlistMatches (matched signal) and
+// weaponTier (per-weapon ranking from Aegis sources). The autolock predicate
+// in controller.ts now reads wishlistMatches.length instead of grade === 'S'.
+// shouldAlert had zero readers; AlertThreshold existed only to compute it.
+//
 // Brief #11 Part D: replaced single `matchedWishListEntry: WishListEntry | null`
 // with `wishlistMatches: WishlistMatch[]`. The matcher now returns one match per
 // flagging source (keeper-wins semantics; trash matches don't appear here but
-// still drive the D grade via the engine's winner inspection).
+// still drive isTrash via the engine's winner inspection).
 export interface ScoreResult {
-  shouldAlert: boolean;
   shouldAutoLock: boolean;
-  grade: Grade | null;
   armorMatched: boolean | null;
   matchedArmorRule: ArmorRule | null;
   wishlistMatches: WishlistMatch[];
@@ -115,7 +115,6 @@ export interface ScoreResult {
 export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
   customRules: [],
   armorRules: [],
-  alertThreshold: 'SA',
   autoLockOnArmorMatch: true,
   excludeCrafted: true,
 };

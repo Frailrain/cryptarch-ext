@@ -31,7 +31,6 @@ import { getEnhancedPerkMap, getManifest, lookupItem } from '@/core/bungie/manif
 import { appendToFeed } from '@/core/storage/drop-feed';
 import { ItemType } from '@/shared/types';
 import type { DropFeedEntry, TierLetter, WishlistMatch } from '@/shared/types';
-import type { Grade } from '@/core/scoring/types';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { resolveBestTier } from '@/core/wishlists/matcher';
 import { runPollCycle } from '@/core/bungie/inventory';
@@ -176,7 +175,6 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
           itemName: itemName ? `[Test] ${itemName}` : `[Test] item ${candidate.itemHash}`,
           itemIcon,
           weaponType: weaponSubType,
-          grade: outcome.grade,
           wishlistMatches: outcome.wishlistMatches,
           perkIcons,
           weaponTier: resolvedTier,
@@ -187,7 +185,6 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
             ok: true,
             itemHash: candidate.itemHash,
             itemName,
-            grade: outcome.grade,
             wishlistMatches: outcome.wishlistMatches,
             weaponTier: resolvedTier,
             reasons: outcome.reasons,
@@ -202,13 +199,11 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
           itemName: '[Test] Unrecognized legendary',
           itemIcon: '',
           weaponType: 'Test fallback',
-          grade: outcome.grade,
           wishlistMatches: outcome.wishlistMatches,
         });
         sendResponse({
           ok: true,
           payload: {
-            grade: outcome.grade,
             wishlistMatches: outcome.wishlistMatches,
             reasons: outcome.reasons,
           },
@@ -270,7 +265,6 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
           itemName: `[Test] ${drop.name}`,
           itemIcon: drop.iconUrl,
           itemType: 'armor',
-          grade: scoreResult.grade,
           timestamp: Date.now(),
           locked: false,
           perkIcons: drop.perks
@@ -339,7 +333,6 @@ function appendTestDropToFeed(input: {
   itemName: string;
   itemIcon: string;
   weaponType: string | null;
-  grade: Grade | null;
   wishlistMatches: WishlistMatch[];
   perkIcons?: string[];
   weaponTier?: TierLetter;
@@ -349,7 +342,6 @@ function appendTestDropToFeed(input: {
     itemName: input.itemName,
     itemIcon: input.itemIcon,
     itemType: 'weapon',
-    grade: input.grade,
     timestamp: Date.now(),
     locked: false,
     perkIcons: input.perkIcons ?? [],

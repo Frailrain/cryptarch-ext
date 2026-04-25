@@ -291,7 +291,7 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
     logJson('scoring', 'scored', {
       instanceId: drop.instanceId,
       name: drop.name,
-      grade: result.grade,
+      matchCount: result.wishlistMatches.length,
       armorMatched: result.armorMatched,
       excluded: result.excluded,
       reasons: result.reasons,
@@ -304,7 +304,6 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
       itemName: drop.name,
       itemIcon: drop.iconUrl,
       itemType: drop.itemTypeEnum === 2 ? 'armor' : 'weapon',
-      grade: result.grade,
       timestamp: drop.detectedAt,
       locked: false,
       perkIcons: drop.perks
@@ -460,7 +459,6 @@ async function handleConfirmedDeletions(deletions: DeletedItem[]): Promise<void>
       itemName: def.displayProperties?.name || `Item ${d.itemHash}`,
       itemIcon: iconPath ? `https://www.bungie.net${iconPath}` : '',
       itemType: itemTypeEnum === 2 ? 'armor' : 'weapon',
-      grade: null,
       timestamp: Date.now(),
       locked: false,
       perkIcons: [],
@@ -480,14 +478,20 @@ async function handleConfirmedDeletions(deletions: DeletedItem[]): Promise<void>
 
 // --- Autolock ----------------------------------------------------------------
 
-// Target logic per Brief #8 Part B:
-//   Weapon, grade S, NOT exotic         → lock
-//   Weapon, exotic                      → never (toast still fires)
-//   Armor, ruleMatched, tier 4+, !exotic → lock if autoLockOnArmorMatch
-//   Armor, ruleMatched, exotic           → lock if autoLockOnArmorMatch
+// Target logic per Brief #8 Part B (predicate updated in Brief #12.5 Part C
+// after grade was retired from the data layer):
+//   Weapon, any wishlist match, NOT exotic → lock
+//   Weapon, exotic                          → never (toast still fires)
+//   Armor, ruleMatched, tier 4+, !exotic    → lock if autoLockOnArmorMatch
+//   Armor, ruleMatched, exotic              → lock if autoLockOnArmorMatch
+//
+// Pre-#12.5 the weapon predicate was `entry.grade === 'S' && !entry.isExotic`.
+// Grade S meant "any enabled wishlist flagged this roll as a keeper", so the
+// new predicate (wishlistMatches.length > 0) preserves the same behavior
+// while reading the canonical signal directly.
 function shouldAutoLock(entry: DropFeedEntry, config: ScoringConfig): boolean {
   if (entry.itemType === 'weapon') {
-    return entry.grade === 'S' && !entry.isExotic;
+    return (entry.wishlistMatches?.length ?? 0) > 0 && !entry.isExotic;
   }
   // armor
   if (!entry.armorMatched) return false;

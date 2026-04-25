@@ -1,4 +1,6 @@
-import type { Grade } from '@/core/scoring/types';
+// Grade type from scoring/types is no longer needed here after Brief #12.5
+// removed `grade` from DropFeedEntry. The scoring types file still defines and
+// exports Grade for CustomRule.grade (a config field, not runtime).
 
 export interface AuthStatusPayload {
   loggedIn: boolean;
@@ -83,7 +85,6 @@ export interface DropFeedEntry {
   itemName: string;
   itemIcon: string;
   itemType: 'weapon' | 'armor';
-  grade: Grade | null;
   timestamp: number;
   locked: boolean;
   perkIcons: string[];

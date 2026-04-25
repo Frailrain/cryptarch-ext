@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { Grade, TierLetter, WishlistMatch } from '@/shared/types';
+import type { TierLetter, WishlistMatch } from '@/shared/types';
 import { send } from '@/shared/messaging';
 
 // In-page wrapper around the cryptarchDebug.testMatch / testFallback console
@@ -20,7 +20,6 @@ type MultiSourcePayload =
       ok: true;
       itemHash: number;
       itemName: string | null;
-      grade: Grade | null;
       wishlistMatches: WishlistMatch[];
       weaponTier?: TierLetter;
       reasons: string[];
@@ -29,7 +28,6 @@ type MultiSourcePayload =
   | { ok: false; message: string; diagnostic?: CacheSummaryRow[] };
 
 interface FallbackPayload {
-  grade: Grade | null;
   wishlistMatches: WishlistMatch[];
   reasons: string[];
 }
@@ -252,7 +250,6 @@ function MultiSourceResultView({ data }: { data: MultiSourcePayload }) {
     <div className="rounded border border-bg-border bg-bg-primary p-3 space-y-2 text-xs">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-medium text-text-primary">{itemDisplay}</span>
-        <GradeChip grade={data.grade} />
         {data.weaponTier && (
           <span className="text-[10px] px-1.5 py-0.5 rounded border border-bg-border text-text-primary">
             Tier {data.weaponTier}
@@ -294,16 +291,20 @@ function MultiSourceResultView({ data }: { data: MultiSourcePayload }) {
 }
 
 function FallbackResultView({ data }: { data: FallbackPayload }) {
-  const expected = data.grade === 'B';
+  // Brief #12.5: post-grade-removal, the fallback test verifies that an
+  // unrecognized hash produces no matches (the canonical "we have nothing
+  // to say about this drop" signal). Pre-#12.5 this was "expected grade B".
+  const expected = data.wishlistMatches.length === 0;
   return (
     <div className="rounded border border-bg-border bg-bg-primary p-3 space-y-2 text-xs">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-medium text-text-primary">Fallback test</span>
-        <GradeChip grade={data.grade} />
         {expected ? (
-          <span className="text-rahool-blue">expected B</span>
+          <span className="text-rahool-blue">no match ✓</span>
         ) : (
-          <span className="text-red-400">unexpected (expected B)</span>
+          <span className="text-red-400">
+            unexpected: matched {data.wishlistMatches.length} source(s)
+          </span>
         )}
       </div>
       <div className="text-text-muted">
@@ -325,27 +326,3 @@ function FallbackResultView({ data }: { data: FallbackPayload }) {
   );
 }
 
-function GradeChip({ grade }: { grade: Grade | null }) {
-  if (!grade) {
-    return (
-      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-bg-border text-text-muted">
-        none
-      </span>
-    );
-  }
-  const cls =
-    grade === 'S'
-      ? 'bg-grade-s/20 text-grade-s border-grade-s/40'
-      : grade === 'A'
-        ? 'bg-grade-a/20 text-grade-a border-grade-a/40'
-        : grade === 'B'
-          ? 'bg-grade-b/20 text-grade-b border-grade-b/40'
-          : grade === 'D'
-            ? 'bg-red-500/20 text-red-400 border-red-500/40'
-            : 'bg-bg-primary text-text-muted border-bg-border';
-  return (
-    <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${cls}`}>
-      {grade}
-    </span>
-  );
-}

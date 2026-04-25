@@ -242,7 +242,9 @@ function DropLogRow({
 }) {
   const isArmor = entry.itemType === 'armor';
   const isMatchedArmor = isArmor && entry.armorMatched === true;
-  const isKeeperWeapon = !isArmor && entry.grade === 'S';
+  // Brief #12.5 Part C: was `entry.grade === 'S'`. Grade S meant "any wishlist
+  // flagged this roll as a keeper" — same semantics as wishlistMatches.length>0.
+  const isKeeperWeapon = !isArmor && (entry.wishlistMatches?.length ?? 0) > 0;
   // Row bg encodes "worth your attention" — green for matched exotic armor,
   // lavender for non-exotic keepers (matched armor + S-tier weapons). Exotic
   // weapons and unmatched exotic armor get no tint; the yellow Ex chip
@@ -256,7 +258,9 @@ function DropLogRow({
       : 'hover:bg-bg-border/40';
 
   const subtitle = isArmor ? buildArmorSubtitle(entry) : entry.weaponType ?? 'Weapon';
-  const lockRelevant = (isArmor && entry.armorMatched === true) || entry.grade === 'S';
+  const lockRelevant =
+    (isArmor && entry.armorMatched === true) ||
+    (entry.wishlistMatches?.length ?? 0) > 0;
 
   return (
     <li

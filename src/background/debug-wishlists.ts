@@ -24,7 +24,6 @@ import { scoreItem } from '@/core/scoring/engine';
 import { loadScoringConfig, loadWishlistSources } from '@/core/storage/scoring-config';
 import { getAllCachedLists, ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { getEnhancedPerkMap, getManifest } from '@/core/bungie/manifest';
-import type { Grade } from '@/core/scoring/types';
 
 // Local copy of tier ranking used to compute the best (lowest-index) tier
 // across multiple matching entries when scanning candidates in
@@ -49,7 +48,6 @@ export interface MultiSourceItem {
 }
 
 interface TestMatchOutcome {
-  grade: Grade | null;
   wishlistMatches: WishlistMatch[];
   isTrash: boolean;
   reasons: string[];
@@ -233,7 +231,6 @@ async function testMatch(itemHash: number, perks?: number[]): Promise<TestMatchO
   const result = scoreItem(drop, config, perkMap);
 
   const outcome: TestMatchOutcome = {
-    grade: result.grade,
     wishlistMatches: result.wishlistMatches,
     isTrash: result.isTrash,
     reasons: result.reasons,
@@ -259,7 +256,6 @@ async function testFallback(): Promise<TestMatchOutcome> {
   config.armorRules = [];
   const result = scoreItem(drop, config, perkMap);
   const outcome: TestMatchOutcome = {
-    grade: result.grade,
     wishlistMatches: result.wishlistMatches,
     isTrash: result.isTrash,
     reasons: result.reasons,
