@@ -1,6 +1,11 @@
 import type { ImportedWishList } from '@/core/scoring/types';
-import { loadWishlists, saveWishlists } from '@/core/storage/scoring-config';
+import {
+  loadWishlists,
+  loadWishlistSources,
+  saveWishlists,
+} from '@/core/storage/scoring-config';
 import { ensureLoaded, onKeyChanged } from '@/adapters/storage';
+import { refreshWishlists } from './fetch';
 
 // In-memory cache of parsed wishlists, keyed by source id (matches WishlistSource.id
 // and ImportedWishList.id). Service workers die after ~30s of inactivity, so this
@@ -71,16 +76,26 @@ export function hydrateWishlistCache(): void {
 /**
  * Async entry point used by the controller: ensures storage is loaded, then
  * hydrates the wishlist cache. The first call per worker wake also fires a
- * fire-and-forget background refresh of all enabled sources (deferred import to
- * avoid a circular cache↔fetch dependency).
+ * fire-and-forget background refresh of all enabled sources.
+ *
+ * cache.ts ↔ fetch.ts are circular at the static-import level (fetch.ts pulls
+ * cache.ts's setFetchSuccess et al., cache.ts pulls fetch.ts's refreshWishlists
+ * here). ESM circular imports work because neither module calls the other at
+ * module-load time — only inside function bodies that run later.
+ *
+ * Brief #12.5 Part D: previously this used `await import(...)` to defer the
+ * load. That triggered Vite's __vitePreload helper which tries to inject
+ * <link rel="modulepreload"> into document.head — fine in browser contexts,
+ * but the SW has no `document`, so cache warm-up at SW boot threw
+ * ReferenceError and the cache stayed cold until the next message handler
+ * explicitly awaited ensureWishlistCacheReady. Static imports skip the
+ * preload helper entirely.
  */
 export async function ensureWishlistCacheReady(): Promise<void> {
   await ensureLoaded();
   hydrateWishlistCache();
   if (!backgroundRefreshKicked) {
     backgroundRefreshKicked = true;
-    const { refreshWishlists } = await import('./fetch');
-    const { loadWishlistSources } = await import('@/core/storage/scoring-config');
     void refreshWishlists(loadWishlistSources()).catch(() => {
       // Errors are tracked per-source in the status map; refreshWishlists
       // itself never throws. The catch here is defense-in-depth.
