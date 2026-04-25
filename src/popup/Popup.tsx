@@ -9,8 +9,38 @@ import {
   type DropFeedEntry,
   type PendingNavigation,
   type PopupFilterState,
+  type TierLetter,
 } from '@/shared/types';
-import type { Grade } from '@/core/scoring/types';
+
+const TIER_FILTER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
+
+// Brief #12 migration: pre-#12 PopupFilterState had `grade: string[]` mixing
+// S/A/B and 'Exotic' in one array. Replaced with separate tiers + showExotic.
+// Old stored values map to: tiers default all-on (no clean grade→tier mapping),
+// showExotic = whether 'Exotic' was in the old grade array.
+function loadPopupFilter(): PopupFilterState {
+  const raw = getItem<{
+    grade?: string[];
+    type?: string[];
+    tiers?: TierLetter[];
+    showExotic?: boolean;
+  }>(POPUP_FILTER_KEY);
+  if (!raw) return DEFAULT_POPUP_FILTER;
+  // Modern shape (post-#12): tiers and showExotic both present.
+  if (Array.isArray(raw.tiers) && typeof raw.showExotic === 'boolean') {
+    return {
+      type: raw.type ?? DEFAULT_POPUP_FILTER.type,
+      tiers: raw.tiers,
+      showExotic: raw.showExotic,
+    };
+  }
+  // Legacy shape: derive what we can.
+  return {
+    type: raw.type ?? DEFAULT_POPUP_FILTER.type,
+    tiers: DEFAULT_POPUP_FILTER.tiers,
+    showExotic: Array.isArray(raw.grade) ? raw.grade.includes('Exotic') : true,
+  };
+}
 
 const MAX_ROWS = 10;
 const POPUP_FILTER_KEY = 'popupFilterState';
@@ -22,9 +52,7 @@ export function Popup() {
     () => loadPrimaryMembership()?.displayName ?? null,
   );
   const [feed, setFeed] = useState<DropFeedEntry[]>(() => loadFeed());
-  const [filter, setFilter] = useState<PopupFilterState>(
-    () => getItem<PopupFilterState>(POPUP_FILTER_KEY) ?? DEFAULT_POPUP_FILTER,
-  );
+  const [filter, setFilter] = useState<PopupFilterState>(() => loadPopupFilter());
   const [autoLock, setAutoLock] = useState<boolean>(
     () => loadScoringConfig().autoLockOnArmorMatch,
   );
@@ -60,17 +88,19 @@ export function Popup() {
     setItem(POPUP_FILTER_KEY, next);
   }, []);
 
-  const toggleGrade = useCallback(
-    (label: string) => {
-      // S is always on — the button for it is disabled, but defensively skip.
-      if (label === 'S') return;
-      const next = filter.grade.includes(label)
-        ? filter.grade.filter((g) => g !== label)
-        : [...filter.grade, label];
-      persistFilter({ ...filter, grade: next });
+  const toggleTier = useCallback(
+    (tier: TierLetter) => {
+      const next = filter.tiers.includes(tier)
+        ? filter.tiers.filter((t) => t !== tier)
+        : [...filter.tiers, tier];
+      persistFilter({ ...filter, tiers: next });
     },
     [filter, persistFilter],
   );
+
+  const toggleExotic = useCallback(() => {
+    persistFilter({ ...filter, showExotic: !filter.showExotic });
+  }, [filter, persistFilter]);
 
   const toggleType = useCallback(
     (label: string) => {
@@ -103,12 +133,17 @@ export function Popup() {
       .filter((e) => {
         const typeLabel = e.itemType === 'weapon' ? 'Weapons' : 'Armor';
         if (!filter.type.includes(typeLabel)) return false;
-        if (e.isExotic) return filter.grade.includes('Exotic');
-        if (e.grade === 'S' || e.grade === 'A' || e.grade === 'B') {
-          return filter.grade.includes(e.grade);
+        if (e.isExotic) return filter.showExotic;
+        // Brief #12: tier filter applies to weapons with tier metadata. Drops
+        // without a weaponTier (Voltron-only matches without Aegis quote, pre-#12
+        // entries) always pass the tier gate. Armor passes through to the
+        // armorMatched check below.
+        if (e.itemType === 'weapon') {
+          if (e.weaponTier && !filter.tiers.includes(e.weaponTier)) return false;
+          return true;
         }
-        // C/D/F and ungraded items don't show in popup.
-        return false;
+        // Armor without explicit match status: show. Otherwise show if matched.
+        return e.armorMatched !== false;
       })
       .slice(0, MAX_ROWS);
   }, [feed, filter]);
@@ -123,7 +158,12 @@ export function Popup() {
 
       {signedIn && (
         <>
-          <FilterChipRow filter={filter} onToggleGrade={toggleGrade} onToggleType={toggleType} />
+          <FilterChipRow
+            filter={filter}
+            onToggleTier={toggleTier}
+            onToggleExotic={toggleExotic}
+            onToggleType={toggleType}
+          />
 
           <div className="flex-1 overflow-y-auto" style={{ maxHeight: 340 }}>
             {feed.length === 0 ? (
@@ -207,45 +247,35 @@ function Header({
 
 function FilterChipRow({
   filter,
-  onToggleGrade,
+  onToggleTier,
+  onToggleExotic,
   onToggleType,
 }: {
   filter: PopupFilterState;
-  onToggleGrade: (label: string) => void;
+  onToggleTier: (tier: TierLetter) => void;
+  onToggleExotic: () => void;
   onToggleType: (label: string) => void;
 }) {
   return (
     <div className="flex items-center flex-wrap gap-1 border-b border-bg-border px-3 py-2">
-      {/* Grade group */}
-      <button
-        disabled
-        title="S grade always shown"
-        className="px-2 py-0.5 rounded text-xs bg-grade-s/20 text-grade-s border border-grade-s/50 cursor-not-allowed"
-      >
-        S
-      </button>
-      <ChipToggle
-        label="A"
-        active={filter.grade.includes('A')}
-        onToggle={() => onToggleGrade('A')}
-        activeCls="bg-grade-a/20 text-grade-a border-grade-a/50"
-      />
-      <ChipToggle
-        label="B"
-        active={filter.grade.includes('B')}
-        onToggle={() => onToggleGrade('B')}
-        activeCls="bg-grade-b/20 text-grade-b border-grade-b/50"
-      />
+      {/* Tier group (replaces pre-#12 grade chips) */}
+      {TIER_FILTER_ORDER.map((tier) => (
+        <TierFilterChip
+          key={tier}
+          tier={tier}
+          active={filter.tiers.includes(tier)}
+          onToggle={() => onToggleTier(tier)}
+        />
+      ))}
       <ChipToggle
         label="Exotic"
-        active={filter.grade.includes('Exotic')}
-        onToggle={() => onToggleGrade('Exotic')}
+        active={filter.showExotic}
+        onToggle={onToggleExotic}
         activeCls="bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50"
       />
       <span className="mx-1 text-text-muted/40" aria-hidden="true">
         |
       </span>
-      {/* Type group */}
       <ChipToggle
         label="Weapons"
         active={filter.type.includes('Weapons')}
@@ -259,6 +289,36 @@ function FilterChipRow({
         activeCls="bg-rahool-blue/20 text-rahool-blue border-rahool-blue/40"
       />
     </div>
+  );
+}
+
+const TIER_CHIP_COLORS: Record<TierLetter, string> = {
+  S: 'bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50',
+  A: 'bg-rahool-blue/20 text-rahool-blue border-rahool-blue/50',
+  B: 'bg-rahool-blue/10 text-rahool-blue/70 border-rahool-blue/30',
+  C: 'bg-text-muted/15 text-text-muted border-text-muted/30',
+  D: 'bg-text-muted/10 text-text-muted/60 border-text-muted/20',
+  F: 'bg-red-500/15 text-red-400/80 border-red-500/30',
+};
+
+function TierFilterChip({
+  tier,
+  active,
+  onToggle,
+}: {
+  tier: TierLetter;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  const cls = active ? TIER_CHIP_COLORS[tier] : 'bg-bg-primary text-text-muted border-bg-border';
+  return (
+    <button
+      onClick={onToggle}
+      title={`Tier ${tier}`}
+      className={`px-2 py-0.5 rounded text-xs border ${cls}`}
+    >
+      {tier}
+    </button>
   );
 }
 
@@ -354,6 +414,9 @@ function WishlistTag({ matches }: { matches: DropFeedEntry['wishlistMatches'] })
 }
 
 function Chip({ entry }: { entry: DropFeedEntry }) {
+  // Brief #12 follow-up: grade chip removed in favor of tier chip; popup
+  // mirrors the Drop Log treatment (one chip per row, tier-colored, blank
+  // when the drop has no tier metadata).
   if (entry.isExotic) {
     return (
       <span className="inline-flex items-center justify-center w-7 h-5 rounded text-[10px] font-semibold border bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50">
@@ -361,30 +424,18 @@ function Chip({ entry }: { entry: DropFeedEntry }) {
       </span>
     );
   }
-  if (entry.itemType === 'weapon' && entry.grade) {
-    return <GradeChip grade={entry.grade} />;
+  if (entry.weaponTier) {
+    const cls = TIER_CHIP_COLORS[entry.weaponTier];
+    return (
+      <span
+        title={`Tier ${entry.weaponTier}`}
+        className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-semibold border ${cls}`}
+      >
+        {entry.weaponTier}
+      </span>
+    );
   }
-  // Armor: use letter grade if present, otherwise blank slot.
-  if (entry.grade) return <GradeChip grade={entry.grade} />;
   return <span className="inline-flex w-5 h-5" aria-hidden="true" />;
-}
-
-function GradeChip({ grade }: { grade: Grade }) {
-  const cls =
-    grade === 'S'
-      ? 'bg-grade-s/20 text-grade-s border-grade-s/50'
-      : grade === 'A'
-        ? 'bg-grade-a/20 text-grade-a border-grade-a/50'
-        : grade === 'B'
-          ? 'bg-grade-b/20 text-grade-b border-grade-b/50'
-          : 'bg-bg-border text-text-muted border-bg-border';
-  return (
-    <span
-      className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-semibold border ${cls}`}
-    >
-      {grade}
-    </span>
-  );
 }
 
 function AutoLockRow({ on, onToggle }: { on: boolean; onToggle: () => void }) {

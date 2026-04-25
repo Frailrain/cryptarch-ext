@@ -28,9 +28,14 @@ import {
 } from '@/core/bungie/inventory';
 import { scoreItem } from '@/core/scoring/engine';
 import { loadArmorRules } from '@/core/rules/armor-rules';
-import { loadScoringConfig } from '@/core/storage/scoring-config';
+import {
+  loadScoringConfig,
+  loadWeaponFilterConfig,
+  loadWishlistSources,
+} from '@/core/storage/scoring-config';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { resolveBestTier } from '@/core/wishlists/matcher';
+import { passesRollTypeFilter, passesTierFilter } from '@/core/wishlists/filters';
 import {
   appendToFeed,
   getFeedEntry,
@@ -55,7 +60,7 @@ import {
   type DestinyMembership,
 } from '@/core/storage/tokens';
 import { showNotification } from '@/adapters/notifications';
-import type { Grade, NotificationThreshold, ScoringConfig } from '@/core/scoring/types';
+import type { NotificationThreshold, ScoringConfig } from '@/core/scoring/types';
 import type {
   ArmorTaxonomyPayload,
   AutolockFailedPayload,
@@ -346,21 +351,12 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
 
 // --- Notification trigger ----------------------------------------------------
 
-// Grade rank for threshold comparison. Higher = rarer.
-const GRADE_RANK: Record<Grade, number> = { S: 5, A: 4, B: 3, C: 2, D: 1, F: 0 };
+// Brief #12 Part H removed weaponGradeMeetsThreshold and its GRADE_RANK
+// supporting constant — the legacy grade-based notification threshold no
+// longer gates weapon notifications. WeaponFilterConfig (tier + roll-type)
+// from the Weapons tab does, applied inside maybeNotify directly.
 
-function weaponGradeMeetsThreshold(
-  grade: Grade | null,
-  threshold: NotificationThreshold,
-): boolean {
-  if (!grade) return false;
-  const gradeRank = GRADE_RANK[grade];
-  const minRank =
-    threshold === 'S' ? GRADE_RANK.S : threshold === 'SA' ? GRADE_RANK.A : GRADE_RANK.B;
-  return gradeRank >= minRank;
-}
-
-// Priority: exotic > armor match > weapon grade. First matching rule wins — a
+// Priority: exotic > armor match > weapon match. First matching rule wins — a
 // single drop fires at most one toast. instanceId is the notificationId so any
 // later call for the same drop (flap re-detection, or autolock "(locked)"
 // suffix update) replaces rather than stacks.
@@ -381,23 +377,31 @@ function maybeNotify(
       (b): b is string => !!b,
     );
     message = bits.length > 0 ? bits.join(' / ') : 'Rule match';
-  } else if (
-    entry.itemType === 'weapon' &&
-    weaponGradeMeetsThreshold(entry.grade, threshold)
-  ) {
-    title = `${entry.grade}-tier: ${entry.itemName}`;
+  } else if (entry.itemType === 'weapon') {
+    // Brief #12 Part H: weapon notifications gate on the user's WeaponFilterConfig
+    // (set on the Weapons tab) instead of the legacy grade threshold. Sequence:
+    //   1. Must have at least one wishlist match (no notify on unmatched weapons)
+    //   2. Must pass the roll-type filter (all-matched / strong-pve / popular)
+    //   3. Must pass the tier filter (untiered drops fail closed when the
+    //      threshold is anything but 'all' — see passesTierFilter docblock)
+    // The legacy `threshold` parameter is unused for weapons now; armor and
+    // exotic branches are unchanged. weaponGradeMeetsThreshold stays available
+    // for back-compat / debug but no production caller hits it.
+    void threshold;
+    const matches = entry.wishlistMatches ?? [];
+    if (matches.length === 0) return;
+    const filterConfig = loadWeaponFilterConfig();
+    const sources = loadWishlistSources();
+    if (!passesRollTypeFilter(matches, filterConfig.rollTypeFilter, sources)) return;
+    if (!passesTierFilter(entry.weaponTier, filterConfig.tierFilter)) return;
+
+    const tierPrefix = entry.weaponTier ? `[Tier ${entry.weaponTier}] ` : '';
+    title = `${tierPrefix}${entry.itemName}`;
     const weaponLabel = entry.weaponType ?? 'Weapon';
-    // Multi-source notification copy (Brief #11 Part G):
-    //   - 1 source: include the source name so the user knows which list flagged it
-    //   - 2+ sources: numeric count signals the stronger consensus signal
-    //   - 0 (rare: S-grade via custom rule, no wishlist match): fall back to legacy copy
-    const matchCount = entry.wishlistMatches?.length ?? 0;
-    if (matchCount === 1) {
-      message = `${weaponLabel} · Wishlist: ${entry.wishlistMatches![0].sourceName}`;
-    } else if (matchCount >= 2) {
-      message = `${weaponLabel} · Matches ${matchCount} wishlists`;
+    if (matches.length === 1) {
+      message = `${weaponLabel} · Wishlist: ${matches[0].sourceName}`;
     } else {
-      message = `${weaponLabel} — Wishlist match`;
+      message = `${weaponLabel} · Matches ${matches.length} wishlists`;
     }
   }
 

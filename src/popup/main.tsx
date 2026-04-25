@@ -17,6 +17,11 @@ const POPUP_STORAGE_KEYS = [
   'popupFilterState',
   'scoring-config',
   'pendingNavigation',
+  // Brief #12 Part G/H: included so onChanged updates to the Weapons-tab
+  // config are visible in the popup context, even though the popup itself
+  // doesn't currently render anything from it. Forward-compat for a future
+  // "show only what'd notify me" filter or similar.
+  'weaponFilterConfig',
 ];
 
 async function bootstrap() {

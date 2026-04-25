@@ -127,16 +127,21 @@ export interface AutolockFailedPayload {
 }
 
 // Popup filter chip state. Persisted so toggles survive popup close/reopen.
-// Grade array contains labels that are currently "on". S stays permanently
-// in the array (the UI renders S as a non-toggleable chip).
+// Brief #12 reshape: replaced the old `grade: string[]` field (S/A/B/Exotic
+// strings mixed in one array) with separate `tiers` (per-weapon tier letters)
+// and `showExotic` (rarity flag). Migration of legacy stored values happens
+// at the popup's load site — old `grade` arrays are dropped, `showExotic` is
+// inferred from whether 'Exotic' was in the array, `tiers` defaults to all-on.
 export interface PopupFilterState {
-  grade: string[];
   type: string[];
+  tiers: TierLetter[];
+  showExotic: boolean;
 }
 
 export const DEFAULT_POPUP_FILTER: PopupFilterState = {
-  grade: ['S', 'A', 'B', 'Exotic'],
   type: ['Weapons', 'Armor'],
+  tiers: ['S', 'A', 'B', 'C', 'D', 'F'],
+  showExotic: true,
 };
 
 // Set by the popup when a user clicks a drop row, read by the Dashboard on
