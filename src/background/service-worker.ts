@@ -27,12 +27,18 @@ import {
   testFallback,
   testMatch,
 } from './debug-wishlists';
-import { lookupItem } from '@/core/bungie/manifest';
+import { getEnhancedPerkMap, getManifest, lookupItem } from '@/core/bungie/manifest';
 import { appendToFeed } from '@/core/storage/drop-feed';
+import { ItemType } from '@/shared/types';
 import type { DropFeedEntry, TierLetter, WishlistMatch } from '@/shared/types';
 import type { Grade } from '@/core/scoring/types';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { resolveBestTier } from '@/core/wishlists/matcher';
+import { runPollCycle } from '@/core/bungie/inventory';
+import { loadPrimaryMembership } from '@/core/storage/tokens';
+import { loadArmorRules } from '@/core/rules/armor-rules';
+import { loadScoringConfig } from '@/core/storage/scoring-config';
+import { scoreItem } from '@/core/scoring/engine';
 
 async function ensurePollAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(POLL_ALARM_NAME);
@@ -205,6 +211,98 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
             grade: outcome.grade,
             wishlistMatches: outcome.wishlistMatches,
             reasons: outcome.reasons,
+          },
+        });
+        return;
+      }
+      if (msg.type === 'wishlist-test-armor') {
+        // Pull a random armor piece from the user's current Destiny inventory,
+        // run it through scoreItem, append the result to the drop log. Calls
+        // runPollCycle with an empty baseline so every current item comes back
+        // as a "new drop" with full perk/stat metadata via buildDrops; we
+        // ignore updatedBaseline so we don't disturb the real poll baseline.
+        await ensureWishlistCacheReady();
+        const membership = loadPrimaryMembership();
+        if (!membership) {
+          sendResponse({
+            ok: true,
+            payload: {
+              ok: false,
+              message: 'Not signed in. Sign in to test against your inventory.',
+            },
+          });
+          return;
+        }
+        const cycle = await runPollCycle(
+          membership.membershipType,
+          membership.membershipId,
+          {},
+        );
+        const armorDrops = cycle.newDrops.filter(
+          (d) => d.itemTypeEnum === ItemType.Armor,
+        );
+        if (armorDrops.length === 0) {
+          sendResponse({
+            ok: true,
+            payload: {
+              ok: false,
+              message:
+                'No armor found in your current inventory snapshot. Try playing for a bit then re-running.',
+            },
+          });
+          return;
+        }
+        const drop = armorDrops[Math.floor(Math.random() * armorDrops.length)];
+        const config = loadScoringConfig();
+        config.armorRules = loadArmorRules();
+        let perkMap = new Map<number, number>();
+        try {
+          await getManifest();
+          perkMap = await getEnhancedPerkMap();
+        } catch {
+          // Manifest issues degrade weapon perk resolution; armor scoring is
+          // unaffected so continue.
+        }
+        const scoreResult = scoreItem(drop, config, perkMap);
+        const armorRoll = scoreResult.armorRoll;
+        const entry: DropFeedEntry = {
+          instanceId: `debug-test-armor-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          itemName: `[Test] ${drop.name}`,
+          itemIcon: drop.iconUrl,
+          itemType: 'armor',
+          grade: scoreResult.grade,
+          timestamp: Date.now(),
+          locked: false,
+          perkIcons: drop.perks
+            .slice(0, 4)
+            .map((p) => p.plugIcon)
+            .filter((i) => i.length > 0),
+          weaponType: null,
+          armorMatched: scoreResult.armorMatched,
+          armorClass: armorRoll?.armorClass ?? null,
+          armorSet: armorRoll?.setName ?? null,
+          armorArchetype: armorRoll?.archetype ?? null,
+          armorTertiary: armorRoll?.tertiaryStat?.name ?? null,
+          armorTier:
+            armorRoll?.tier === 4 || armorRoll?.tier === 5 ? armorRoll.tier : null,
+          isExotic: drop.tierType === 'Exotic',
+        };
+        appendToFeed(entry);
+        sendResponse({
+          ok: true,
+          payload: {
+            ok: true,
+            itemHash: drop.itemHash,
+            itemName: drop.name,
+            armorMatched: scoreResult.armorMatched,
+            armorClass: armorRoll?.armorClass ?? null,
+            armorSet: armorRoll?.setName ?? null,
+            armorArchetype: armorRoll?.archetype ?? null,
+            armorTertiary: armorRoll?.tertiaryStat?.name ?? null,
+            armorTier: armorRoll?.tier ?? null,
+            isExotic: drop.tierType === 'Exotic',
+            matchedRule: scoreResult.matchedArmorRule?.name ?? null,
+            reasons: scoreResult.reasons,
           },
         });
         return;

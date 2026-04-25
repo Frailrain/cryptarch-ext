@@ -12,7 +12,8 @@ export type MessageType =
   | 'retry-manifest'
   | 'trigger-poll-now'
   | 'wishlist-test-multi-source'
-  | 'wishlist-test-fallback';
+  | 'wishlist-test-fallback'
+  | 'wishlist-test-armor';
 
 export interface Message<T = unknown> {
   type: MessageType;

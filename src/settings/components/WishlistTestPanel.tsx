@@ -34,16 +34,35 @@ interface FallbackPayload {
   reasons: string[];
 }
 
+type ArmorPayload =
+  | {
+      ok: true;
+      itemHash: number;
+      itemName: string;
+      armorMatched: boolean | null;
+      armorClass: string | null;
+      armorSet: string | null;
+      armorArchetype: string | null;
+      armorTertiary: string | null;
+      armorTier: number | null;
+      isExotic: boolean;
+      matchedRule: string | null;
+      reasons: string[];
+    }
+  | { ok: false; message: string };
+
 type RunState = 'idle' | 'running';
 type ResultState =
   | { kind: 'none' }
   | { kind: 'multi'; data: MultiSourcePayload }
   | { kind: 'fallback'; data: FallbackPayload }
+  | { kind: 'armor'; data: ArmorPayload }
   | { kind: 'error'; message: string };
 
 export function WishlistTestPanel() {
   const [multiState, setMultiState] = useState<RunState>('idle');
   const [fallbackState, setFallbackState] = useState<RunState>('idle');
+  const [armorState, setArmorState] = useState<RunState>('idle');
   const [result, setResult] = useState<ResultState>({ kind: 'none' });
 
   const runMultiSource = useCallback(async () => {
@@ -72,6 +91,19 @@ export function WishlistTestPanel() {
     setResult({ kind: 'fallback', data: response.payload });
   }, []);
 
+  const runArmor = useCallback(async () => {
+    setArmorState('running');
+    const response = await send<{ ok: boolean; payload?: ArmorPayload; error?: string }>({
+      type: 'wishlist-test-armor',
+    });
+    setArmorState('idle');
+    if (!response?.ok || !response.payload) {
+      setResult({ kind: 'error', message: response?.error ?? 'Test failed (no response)' });
+      return;
+    }
+    setResult({ kind: 'armor', data: response.payload });
+  }, []);
+
   return (
     <div className="rounded-lg border border-bg-border bg-bg-card p-4 space-y-3">
       <div className="flex items-center justify-between gap-3">
@@ -83,20 +115,33 @@ export function WishlistTestPanel() {
             configuration.
           </div>
         </div>
-        <div className="flex gap-2 shrink-0">
+        <div className="flex gap-2 shrink-0 flex-wrap">
           <button
             onClick={() => void runMultiSource()}
-            disabled={multiState === 'running' || fallbackState === 'running'}
+            disabled={
+              multiState === 'running' || fallbackState === 'running' || armorState === 'running'
+            }
             className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {multiState === 'running' ? 'Testing…' : 'Run multi-source test'}
           </button>
           <button
             onClick={() => void runFallback()}
-            disabled={multiState === 'running' || fallbackState === 'running'}
+            disabled={
+              multiState === 'running' || fallbackState === 'running' || armorState === 'running'
+            }
             className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {fallbackState === 'running' ? 'Testing…' : 'Run fallback test'}
+          </button>
+          <button
+            onClick={() => void runArmor()}
+            disabled={
+              multiState === 'running' || fallbackState === 'running' || armorState === 'running'
+            }
+            className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {armorState === 'running' ? 'Fetching inventory…' : 'Run armor test'}
           </button>
         </div>
       </div>
@@ -107,6 +152,61 @@ export function WishlistTestPanel() {
 
       {result.kind === 'multi' && <MultiSourceResultView data={result.data} />}
       {result.kind === 'fallback' && <FallbackResultView data={result.data} />}
+      {result.kind === 'armor' && <ArmorResultView data={result.data} />}
+    </div>
+  );
+}
+
+function ArmorResultView({ data }: { data: ArmorPayload }) {
+  if (!data.ok) {
+    return (
+      <div className="rounded border border-bg-border bg-bg-primary p-3 text-xs text-text-muted">
+        {data.message}
+      </div>
+    );
+  }
+  const subtitle = [
+    data.armorClass,
+    data.armorSet,
+    data.armorArchetype,
+    data.armorTertiary,
+    data.armorTier ? `T${data.armorTier}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <div className="rounded border border-bg-border bg-bg-primary p-3 space-y-2 text-xs">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-medium text-text-primary">
+          {data.itemName} (#{data.itemHash})
+        </span>
+        {data.isExotic && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded border bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50">
+            Exotic
+          </span>
+        )}
+        {data.armorMatched === true && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded border bg-grade-s/20 text-grade-s border-grade-s/50">
+            Matched
+          </span>
+        )}
+        {data.armorMatched === false && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded border border-bg-border text-text-muted">
+            No match
+          </span>
+        )}
+      </div>
+      {subtitle && <div className="text-text-muted">{subtitle}</div>}
+      {data.matchedRule && (
+        <div className="text-text-muted">
+          <span className="font-medium">Matched rule:</span> {data.matchedRule}
+        </div>
+      )}
+      {data.reasons.length > 0 && (
+        <div className="text-text-muted">
+          <span className="font-medium">Reasons:</span> {data.reasons.join('; ')}
+        </div>
+      )}
     </div>
   );
 }
