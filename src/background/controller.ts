@@ -378,7 +378,19 @@ function maybeNotify(
     weaponGradeMeetsThreshold(entry.grade, threshold)
   ) {
     title = `${entry.grade}-tier: ${entry.itemName}`;
-    message = `${entry.weaponType ?? 'Weapon'} — Wishlist match`;
+    const weaponLabel = entry.weaponType ?? 'Weapon';
+    // Multi-source notification copy (Brief #11 Part G):
+    //   - 1 source: include the source name so the user knows which list flagged it
+    //   - 2+ sources: numeric count signals the stronger consensus signal
+    //   - 0 (rare: S-grade via custom rule, no wishlist match): fall back to legacy copy
+    const matchCount = entry.wishlistMatches?.length ?? 0;
+    if (matchCount === 1) {
+      message = `${weaponLabel} · Wishlist: ${entry.wishlistMatches![0].sourceName}`;
+    } else if (matchCount >= 2) {
+      message = `${weaponLabel} · Matches ${matchCount} wishlists`;
+    } else {
+      message = `${weaponLabel} — Wishlist match`;
+    }
   }
 
   if (!title || !message) return;

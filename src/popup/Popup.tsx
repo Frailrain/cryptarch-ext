@@ -321,11 +321,35 @@ function DropRow({
             </span>
           )}
         </span>
+        {!deleted && <WishlistTag matches={entry.wishlistMatches} />}
         <span className="text-[10px] text-text-muted whitespace-nowrap">
           {deleted ? 'Dismantled' : formatRelative(nowTick - entry.timestamp)}
         </span>
       </button>
     </li>
+  );
+}
+
+function WishlistTag({ matches }: { matches: DropFeedEntry['wishlistMatches'] }) {
+  if (!matches || matches.length === 0) return null;
+  // Single match: abbreviate to first word of source name (e.g. "Aegis" instead
+  // of "Aegis Endgame Analysis") so the popup row doesn't break on long names.
+  // Full name + notes available on hover.
+  // Multiple matches: numeric badge so we don't have to fit several names in.
+  const isMulti = matches.length > 1;
+  const label = isMulti ? `Wishlist ×${matches.length}` : matches[0].sourceName.split(' ')[0];
+  const title = isMulti
+    ? matches.map((m) => m.sourceName).join(', ')
+    : matches[0].notes
+      ? `${matches[0].sourceName} — ${matches[0].notes}`
+      : matches[0].sourceName;
+  return (
+    <span
+      title={title}
+      className="text-[10px] px-1.5 py-0.5 rounded border bg-rahool-blue/15 text-rahool-blue border-rahool-blue/40 whitespace-nowrap"
+    >
+      {label}
+    </span>
   );
 }
 

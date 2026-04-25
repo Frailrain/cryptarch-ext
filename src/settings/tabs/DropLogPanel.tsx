@@ -303,6 +303,22 @@ function DropLogRow({
           {entry.itemName}
         </div>
         <div className="text-xs text-text-muted truncate">{subtitle}</div>
+        {/* Wishlist source tags. Own row below subtitle so 3+ matches don't
+            wedge against the perk icons / grade chip on the right. Optional
+            chain guards pre-#11 entries that lack the field. */}
+        {entry.wishlistMatches && entry.wishlistMatches.length > 0 && (
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            {entry.wishlistMatches.map((m) => (
+              <span
+                key={m.sourceId}
+                title={m.notes || m.sourceName}
+                className="text-[10px] px-1.5 py-0.5 rounded border bg-rahool-blue/15 text-rahool-blue border-rahool-blue/40"
+              >
+                {m.sourceName}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex items-center gap-1">
         {entry.perkIcons.slice(0, 4).map((icon, i) => (
