@@ -20,6 +20,7 @@ import {
   kickoffManifestLoad,
 } from './controller';
 import type { Message } from '@/shared/messaging';
+import { installWishlistDebug } from './debug-wishlists';
 
 async function ensurePollAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(POLL_ALARM_NAME);
@@ -104,5 +105,10 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
   })();
   return true; // keep sendResponse open for async reply
 });
+
+// Install Brief #11 debug helpers on globalThis. Each SW wake re-attaches them
+// since module-level state doesn't persist across teardown. See
+// debug-wishlists.ts for usage.
+installWishlistDebug();
 
 log('sw', 'service worker loaded');

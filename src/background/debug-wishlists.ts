@@ -1,0 +1,229 @@
+// Brief #11 debug helpers. Exposed on globalThis as `cryptarchDebug` so the
+// service worker DevTools console can drive synthetic drops through the full
+// scoring pipeline without needing live Bungie inventory churn.
+//
+// Open the SW devtools at chrome://extensions → Cryptarch → "service worker"
+// link, then call any of the methods below. Examples:
+//
+//   await cryptarchDebug.cacheSummary()
+//   cryptarchDebug.findMultiSourceItems(2)
+//   await cryptarchDebug.testMatch(2870317354)        // pick a hash from above
+//   await cryptarchDebug.testFallback()
+//
+// The helpers read from the live wishlist cache, so the user's enabled-source
+// configuration affects results — exactly what we want for verifying
+// multi-source detection end-to-end.
+//
+// Permanent rather than temporary: cost is small (~3 kB in the SW bundle), the
+// surface is only reachable from the SW devtools console (not from web pages),
+// and ad-hoc verification stays useful past Brief #11. Remove if SW console
+// attack surface ever becomes a concern.
+
+import { ItemType, type NewItemDrop, type WishlistMatch } from '@/shared/types';
+import { scoreItem } from '@/core/scoring/engine';
+import { loadScoringConfig, loadWishlistSources } from '@/core/storage/scoring-config';
+import { getAllCachedLists, ensureWishlistCacheReady } from '@/core/wishlists/cache';
+import { getEnhancedPerkMap, getManifest } from '@/core/bungie/manifest';
+import type { Grade } from '@/core/scoring/types';
+
+interface MultiSourceItem {
+  itemHash: number;
+  sources: string[];
+  samplePerks: number[];
+}
+
+interface TestMatchOutcome {
+  grade: Grade | null;
+  wishlistMatches: WishlistMatch[];
+  isTrash: boolean;
+  reasons: string[];
+}
+
+async function ensureReady(): Promise<Map<number, number>> {
+  await ensureWishlistCacheReady();
+  let perkMap = new Map<number, number>();
+  try {
+    await getManifest();
+    perkMap = await getEnhancedPerkMap();
+  } catch {
+    // Continue with empty map — wishlist matches against base perks still work,
+    // only enhanced-variant resolution is degraded.
+  }
+  return perkMap;
+}
+
+function buildSyntheticDrop(
+  itemHash: number,
+  perks: number[],
+  tierType: 'Legendary' | 'Rare' = 'Legendary',
+): NewItemDrop {
+  return {
+    instanceId: `debug-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    itemHash,
+    bucketHash: 0,
+    name: `debug-item-${itemHash}`,
+    iconUrl: '',
+    itemTypeEnum: ItemType.Weapon,
+    itemSubType: 'Weapon',
+    tierType,
+    damageType: null,
+    perks: perks.map((plugHash, columnIndex) => ({
+      columnIndex,
+      plugHash,
+      plugName: '',
+      plugIcon: '',
+      isActive: true,
+    })),
+    stats: {},
+    characterId: '',
+    membershipType: 0,
+    isCrafted: false,
+    location: 'inventory',
+    detectedAt: Date.now(),
+  };
+}
+
+function enabledSources() {
+  return loadWishlistSources().filter((s) => s.enabled);
+}
+
+function cacheSummary() {
+  const enabledIds = new Set(enabledSources().map((s) => s.id));
+  return getAllCachedLists().map((l) => ({
+    id: l.id,
+    name: l.name,
+    entryCount: l.entryCount,
+    enabled: enabledIds.has(l.id),
+  }));
+}
+
+/**
+ * Walk the live cache (enabled sources only), group keeper entries by item hash,
+ * and return hashes flagged by at least `minSources` sources. Useful for picking
+ * a real multi-source target before calling testMatch.
+ *
+ * Returned `samplePerks` come from the first matching keeper entry encountered —
+ * good for handing straight to testMatch as a guaranteed-match fixture.
+ */
+function findMultiSourceItems(minSources = 2, limit = 10): MultiSourceItem[] {
+  const enabledIds = new Set(enabledSources().map((s) => s.id));
+  const lists = getAllCachedLists().filter((l) => enabledIds.has(l.id));
+
+  // itemHash → { sources: Set, perks: number[] }
+  const groups = new Map<number, { sources: Set<string>; perks: number[] }>();
+
+  for (const list of lists) {
+    // Track first-seen-keeper-entry per (list, itemHash) so we don't double-count
+    // a list that has multiple entries for the same hash.
+    const seenInList = new Set<number>();
+    for (const entry of list.entries) {
+      if (entry.isTrash) continue;
+      if (entry.itemHash === -1) continue; // skip catch-all entries
+      if (seenInList.has(entry.itemHash)) continue;
+      seenInList.add(entry.itemHash);
+
+      let group = groups.get(entry.itemHash);
+      if (!group) {
+        group = { sources: new Set(), perks: entry.requiredPerks };
+        groups.set(entry.itemHash, group);
+      }
+      group.sources.add(list.id);
+    }
+  }
+
+  const out: MultiSourceItem[] = [];
+  for (const [itemHash, { sources, perks }] of groups) {
+    if (sources.size < minSources) continue;
+    out.push({
+      itemHash,
+      sources: Array.from(sources),
+      samplePerks: perks,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Synthesize a drop with the given hash + perks and run it through the full
+ * scoring pipeline. If `perks` is omitted, picks the first matching keeper
+ * entry from the cache so the drop is guaranteed to match (assuming the hash
+ * appears in any enabled source's cache).
+ */
+async function testMatch(itemHash: number, perks?: number[]): Promise<TestMatchOutcome> {
+  const perkMap = await ensureReady();
+
+  let usePerks = perks;
+  if (!usePerks) {
+    const enabledIds = new Set(enabledSources().map((s) => s.id));
+    for (const list of getAllCachedLists()) {
+      if (!enabledIds.has(list.id)) continue;
+      const found = list.entries.find(
+        (e) => !e.isTrash && (e.itemHash === itemHash || e.itemHash === -1),
+      );
+      if (found) {
+        usePerks = found.requiredPerks;
+        break;
+      }
+    }
+  }
+  if (!usePerks) {
+    usePerks = [];
+    console.warn(
+      `[cryptarchDebug] No matching keeper entry found for hash ${itemHash} in any enabled source's cache. Running with empty perks (will likely fall through to tier-based grade).`,
+    );
+  }
+
+  const drop = buildSyntheticDrop(itemHash, usePerks);
+  const config = loadScoringConfig();
+  config.armorRules = []; // not needed for weapon scoring
+
+  const result = scoreItem(drop, config, perkMap);
+
+  const outcome: TestMatchOutcome = {
+    grade: result.grade,
+    wishlistMatches: result.wishlistMatches,
+    isTrash: result.isTrash,
+    reasons: result.reasons,
+  };
+  console.log('[cryptarchDebug.testMatch]', {
+    itemHash,
+    perks: usePerks,
+    outcome,
+  });
+  return outcome;
+}
+
+/**
+ * Convenience: synthesize a drop with a deliberately-unrecognized hash and no
+ * perks. Should grade B (Legendary fallback). If it grades anything else, the
+ * fallback path is broken or the matcher is matching catch-all entries it
+ * shouldn't.
+ */
+async function testFallback(): Promise<TestMatchOutcome> {
+  const perkMap = await ensureReady();
+  const drop = buildSyntheticDrop(0xffffffff, []);
+  const config = loadScoringConfig();
+  config.armorRules = [];
+  const result = scoreItem(drop, config, perkMap);
+  const outcome: TestMatchOutcome = {
+    grade: result.grade,
+    wishlistMatches: result.wishlistMatches,
+    isTrash: result.isTrash,
+    reasons: result.reasons,
+  };
+  console.log('[cryptarchDebug.testFallback]', outcome);
+  return outcome;
+}
+
+const debugApi = {
+  enabledSources,
+  cacheSummary,
+  findMultiSourceItems,
+  testMatch,
+  testFallback,
+};
+
+export function installWishlistDebug(): void {
+  (globalThis as unknown as { cryptarchDebug: typeof debugApi }).cryptarchDebug = debugApi;
+}
