@@ -1,6 +1,6 @@
 import type { ImportedWishList } from '@/core/scoring/types';
 import { loadWishlists, saveWishlists } from '@/core/storage/scoring-config';
-import { ensureLoaded } from '@/adapters/storage';
+import { ensureLoaded, onKeyChanged } from '@/adapters/storage';
 
 // In-memory cache of parsed wishlists, keyed by source id (matches WishlistSource.id
 // and ImportedWishList.id). Service workers die after ~30s of inactivity, so this
@@ -144,3 +144,48 @@ export function removeFromCache(sourceId: string): void {
 function persistCache(): void {
   saveWishlists(Array.from(cache.values()));
 }
+
+// Cross-context cache sync: the storage adapter's onChanged listener already
+// keeps the raw key/value cache in sync, but our wishlist Map needs its own
+// hook because it derives from a single key. Without this, a settings-page
+// refresh of a source wouldn't be visible to the SW's matcher until the next
+// worker wake — which broke the in-page Wishlist matcher test panel and meant
+// up to 30s of stale scoring after any user-initiated config change.
+//
+// Same-context writes are handled idempotently: setFetchSuccess updates the Map
+// then calls persistCache which triggers this listener; the importedAt
+// comparison below makes the re-process a no-op since the Map already holds the
+// just-written list with the same timestamp.
+onKeyChanged<ImportedWishList[]>('wishlists', (newValue) => {
+  if (!hydrated) return; // initial hydration via hydrateWishlistCache handles cold start
+  const incoming = new Map<string, ImportedWishList>();
+  if (newValue) {
+    for (const list of newValue) {
+      if (list && typeof list.id === 'string') incoming.set(list.id, list);
+    }
+  }
+  // Drop entries that disappeared from storage (another context deleted a source).
+  for (const id of Array.from(cache.keys())) {
+    if (!incoming.has(id)) {
+      cache.delete(id);
+      status.delete(id);
+    }
+  }
+  // Add or refresh entries that are new or have a newer importedAt.
+  for (const [id, list] of incoming) {
+    const existing = cache.get(id);
+    if (existing && existing.importedAt === list.importedAt) continue;
+    cache.set(id, list);
+    const prev = status.get(id);
+    // Don't clobber an in-flight 'fetching' state; that context's own
+    // setFetchSuccess will land the final state.
+    if (!prev || prev.state !== 'fetching') {
+      status.set(id, {
+        state: 'ok',
+        lastSuccessAt: list.importedAt,
+        lastAttemptAt: list.importedAt,
+        entryCount: list.entryCount,
+      });
+    }
+  }
+});

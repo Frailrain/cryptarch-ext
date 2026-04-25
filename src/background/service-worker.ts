@@ -27,6 +27,9 @@ import {
   testMatch,
 } from './debug-wishlists';
 import { lookupItem } from '@/core/bungie/manifest';
+import { appendToFeed } from '@/core/storage/drop-feed';
+import type { DropFeedEntry, WishlistMatch } from '@/shared/types';
+import type { Grade } from '@/core/scoring/types';
 
 async function ensurePollAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(POLL_ALARM_NAME);
@@ -122,12 +125,24 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         const candidate = candidates[0];
         const outcome = await testMatch(candidate.itemHash, candidate.samplePerks);
         let itemName: string | null = null;
+        let itemIcon = '';
+        let weaponSubType: string | null = null;
         try {
           const def = await lookupItem(candidate.itemHash);
           itemName = def?.displayProperties?.name ?? null;
+          const iconPath = def?.displayProperties?.icon;
+          if (iconPath) itemIcon = `https://www.bungie.net${iconPath}`;
+          weaponSubType = def?.itemTypeDisplayName ?? null;
         } catch {
           // Manifest not ready or hash absent — UI falls back to hash.
         }
+        appendTestDropToFeed({
+          itemName: itemName ? `[Test] ${itemName}` : `[Test] item ${candidate.itemHash}`,
+          itemIcon,
+          weaponType: weaponSubType,
+          grade: outcome.grade,
+          wishlistMatches: outcome.wishlistMatches,
+        });
         sendResponse({
           ok: true,
           payload: {
@@ -144,6 +159,13 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
       }
       if (msg.type === 'wishlist-test-fallback') {
         const outcome = await testFallback();
+        appendTestDropToFeed({
+          itemName: '[Test] Unrecognized legendary',
+          itemIcon: '',
+          weaponType: 'Test fallback',
+          grade: outcome.grade,
+          wishlistMatches: outcome.wishlistMatches,
+        });
         sendResponse({
           ok: true,
           payload: {
@@ -167,5 +189,40 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
 // since module-level state doesn't persist across teardown. See
 // debug-wishlists.ts for usage.
 installWishlistDebug();
+
+// Synthesize a DropFeedEntry from a test-handler outcome and append it to the
+// feed. Mirrors the shape produced by handleNewDrops in controller.ts so the
+// drop renders identically in DropLogPanel — same grade chip, same wishlist
+// match path, same source-tag rendering once Part F lands. The "[Test]" name
+// prefix keeps it visually distinct from real drops.
+function appendTestDropToFeed(input: {
+  itemName: string;
+  itemIcon: string;
+  weaponType: string | null;
+  grade: Grade | null;
+  wishlistMatches: WishlistMatch[];
+}): void {
+  const entry: DropFeedEntry = {
+    instanceId: `debug-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    itemName: input.itemName,
+    itemIcon: input.itemIcon,
+    itemType: 'weapon',
+    grade: input.grade,
+    timestamp: Date.now(),
+    locked: false,
+    perkIcons: [],
+    weaponType: input.weaponType,
+    armorMatched: null,
+    armorClass: null,
+    armorSet: null,
+    armorArchetype: null,
+    armorTertiary: null,
+    armorTier: null,
+    isExotic: false,
+    wishlistMatches:
+      input.wishlistMatches.length > 0 ? input.wishlistMatches : undefined,
+  };
+  appendToFeed(entry);
+}
 
 log('sw', 'service worker loaded');

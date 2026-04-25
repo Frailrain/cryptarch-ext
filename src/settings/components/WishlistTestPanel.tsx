@@ -70,8 +70,9 @@ export function WishlistTestPanel() {
         <div>
           <div className="text-sm font-medium">Wishlist matcher test</div>
           <div className="text-xs text-text-muted">
-            Synthesizes a drop and runs it through the live matcher. Results reflect your current
-            enabled-source configuration.
+            Synthesizes a drop, runs it through the live matcher, and appends it to the drop log
+            below (prefixed with [Test]). Results reflect your current enabled-source
+            configuration.
           </div>
         </div>
         <div className="flex gap-2 shrink-0">
