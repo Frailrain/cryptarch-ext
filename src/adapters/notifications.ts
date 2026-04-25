@@ -34,11 +34,19 @@ export async function showNotification(opts: ShowNotificationOptions): Promise<s
   };
 
   try {
-    // chrome.notifications.create returns Promise<string> in MV3 when called
-    // without a callback. The notificationId arg may be omitted to auto-assign.
-    const id = opts.notificationId
-      ? await chrome.notifications.create(opts.notificationId, options)
-      : await chrome.notifications.create(options);
+    // The @types/chrome typedef declares all chrome.notifications.create
+    // overloads as returning void (callback-based). At runtime MV3 returns
+    // Promise<string>, but the typedef hasn't caught up. Wrap the callback
+    // form in a Promise manually so the type comes through correctly.
+    // Always passing an explicit notificationId (generated if caller didn't
+    // supply one) keeps dedupe semantics consistent — same id arg means
+    // replacing an existing notification, fresh uuid means a new one.
+    const notificationId = opts.notificationId ?? crypto.randomUUID();
+    const id = await new Promise<string>((resolve) => {
+      chrome.notifications.create(notificationId, options, (createdId) => {
+        resolve(createdId);
+      });
+    });
     logJson('notify', 'shown', { id, title: opts.title });
     return id;
   } catch (err) {

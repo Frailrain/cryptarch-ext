@@ -15,7 +15,10 @@ export type LogTag =
   | 'wishlist'
   | 'bungieRequest'
   | 'requestToken'
-  | 'sw';
+  | 'sw'
+  | 'notify'
+  | 'taxonomy'
+  | 'deletion';
 
 export function log(tag: LogTag, ...args: unknown[]): void {
   console.log(`[${tag}]`, ...args);
