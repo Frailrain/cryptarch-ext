@@ -6,7 +6,16 @@ import {
   saveWishlistSources,
 } from '@/core/storage/scoring-config';
 import { onKeyChanged } from '@/adapters/storage';
-import { refreshOne, refreshWishlists, validateWishlistUrl } from '@/core/wishlists/fetch';
+// Brief #12.5 Part D: settings is a viewer. All wishlist mutations go through
+// SW message handlers via this client wrapper. Direct imports of the
+// fetch/cache/matcher modules from settings are forbidden — see comment block
+// at the top of cache.ts for why.
+import {
+  requestDropSource,
+  requestRefreshAll,
+  requestRefreshOne,
+  requestValidateUrl,
+} from '@/adapters/wishlist-messages';
 
 // Per-source UI state machine. The persisted FetchStatus in cache.ts only lives
 // in the service worker context; the settings page tracks its own ephemeral
@@ -18,11 +27,10 @@ type RowState =
 
 export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } = {}) {
   const [sources, setSources] = useState<WishlistSource[]>(() => loadWishlistSources());
-  // Brief #12.5 Part D: was loadWishlists() (60 MB+ payload). Now reads the
-  // lightweight metadata view — same display fields (name, entry count,
-  // last-updated), no entries array. Migration in loadWishlistMetadata
-  // derives the metadata from the full payload on first call for upgraded
-  // users; subsequent calls are sync hits on the wishlistMetadata key.
+  // Brief #12.5 Part D: lightweight metadata view (~5 KB, sync read from
+  // adapter cache). Returns [] when missing — the SW derives + persists
+  // metadata on its own hydrate, so the empty state is transient on a
+  // fresh install before the first SW boot completes.
   const [cachedLists, setCachedLists] = useState<WishlistMetadata[]>(() =>
     loadWishlistMetadata(),
   );
@@ -61,14 +69,13 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
     return () => window.clearInterval(id);
   }, []);
 
-  // On mount: kick a stale-only refresh. The 24h staleness check inside
-  // refreshOne short-circuits sources that are still fresh, so opening the
-  // tab repeatedly is cheap. The settings page no longer needs to lazy-load
-  // the full wishlists payload — metadata is enough for display, and the
-  // matcher (in SW) loads its own copy.
-  useEffect(() => {
-    void refreshWishlists(loadWishlistSources()).catch(() => {});
-  }, []);
+  // Brief #12.5 Part D: no auto-refresh on mount. The previous version called
+  // refreshWishlists in the settings context, which (with an empty
+  // settings-context status map) failed every isStale check and re-fetched
+  // every enabled source — a 30-second freeze every Weapons-tab open. The SW
+  // does its own staleness-checked refresh on each wake; manual refresh from
+  // the user goes through the message handlers (Refresh All / per-row Refresh
+  // buttons below).
 
   const cacheById = useMemo(() => {
     const m = new Map<string, WishlistMetadata>();
@@ -93,18 +100,19 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
     async (source: WishlistSource, enabled: boolean) => {
       const next = sources.map((s) => (s.id === source.id ? { ...s, enabled } : s));
       persistSources(next);
-      // Fetch immediately on enable so the user's first match against this
-      // source uses fresh data. The 24h staleness check skips the network if
-      // the source was previously enabled and refreshed recently.
+      // Fetch immediately on enable via the SW. The SW's 24h staleness check
+      // skips the network if the source was previously enabled and refreshed
+      // recently. Settings page just shows fetching → idle/error from the
+      // message response.
       if (enabled) {
         setRowState(source.id, { kind: 'fetching' });
-        const result = await refreshOne({ ...source, enabled: true });
+        const result = await requestRefreshOne(source.id, false);
         setRowState(
           source.id,
-          result.ok ? { kind: 'idle' } : { kind: 'error', message: result.error ?? 'Fetch failed' },
+          result.ok
+            ? { kind: 'idle' }
+            : { kind: 'error', message: result.error },
         );
-        // Pick up new entry count immediately even if onKeyChanged hasn't fired.
-        setCachedLists(loadWishlistMetadata());
       }
     },
     [sources, persistSources, setRowState],
@@ -113,12 +121,11 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
   const handleRefreshOne = useCallback(
     async (source: WishlistSource) => {
       setRowState(source.id, { kind: 'fetching' });
-      const result = await refreshOne(source, { force: true });
+      const result = await requestRefreshOne(source.id, true);
       setRowState(
         source.id,
-        result.ok ? { kind: 'idle' } : { kind: 'error', message: result.error ?? 'Fetch failed' },
+        result.ok ? { kind: 'idle' } : { kind: 'error', message: result.error },
       );
-      setCachedLists(loadWishlistMetadata());
     },
     [setRowState],
   );
@@ -128,7 +135,17 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
     setRefreshAllToast(null);
     const enabled = sources.filter((s) => s.enabled);
     for (const s of enabled) setRowState(s.id, { kind: 'fetching' });
-    const results = await refreshWishlists(enabled, { force: true });
+    const response = await requestRefreshAll(true);
+    if (!response.ok) {
+      for (const s of enabled) {
+        setRowState(s.id, { kind: 'error', message: response.error });
+      }
+      setRefreshAllToast(`Refresh failed: ${response.error}`);
+      setRefreshAllPending(false);
+      window.setTimeout(() => setRefreshAllToast(null), 4000);
+      return;
+    }
+    const results = response.results;
     for (const result of results) {
       setRowState(
         result.sourceId,
@@ -137,7 +154,6 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
           : { kind: 'error', message: result.error ?? 'Fetch failed' },
       );
     }
-    setCachedLists(loadWishlistMetadata());
     setRefreshAllPending(false);
     const okCount = results.filter((r) => r.ok).length;
     const failCount = results.length - okCount;
@@ -161,7 +177,7 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
       return;
     }
     setValidating(true);
-    const result = await validateWishlistUrl(trimmedUrl);
+    const result = await requestValidateUrl(trimmedUrl);
     setValidating(false);
     if (!result.ok) {
       setAddError(result.error);
@@ -181,35 +197,28 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
     persistSources(next);
     setNewUrl('');
     setNewName('');
-    // Fetch the just-added source so the Map populates and entry count shows up.
+    // Trigger the SW to actually fetch + cache the new source. The metadata
+    // listener picks up the new entry count once it lands.
     setRowState(id, { kind: 'fetching' });
-    const fetchResult = await refreshOne(newSource, { force: true });
+    const fetchResp = await requestRefreshOne(id, true);
     setRowState(
       id,
-      fetchResult.ok
-        ? { kind: 'idle' }
-        : { kind: 'error', message: fetchResult.error ?? 'Fetch failed' },
+      fetchResp.ok ? { kind: 'idle' } : { kind: 'error', message: fetchResp.error },
     );
-    setCachedLists(loadWishlistMetadata());
   }, [newUrl, newName, sources, persistSources, setRowState]);
 
   const handleDeleteCustom = useCallback(
-    (source: WishlistSource) => {
-      const ok = window.confirm(`Delete "${source.name}"? The cached entries will also be removed.`);
+    async (source: WishlistSource) => {
+      const ok = window.confirm(
+        `Delete "${source.name}"? The cached entries will also be removed.`,
+      );
       if (!ok) return;
       const next = sources.filter((s) => s.id !== source.id);
       persistSources(next);
-      // Cache cleanup: pull the full wishlists payload (the only place
-      // WishlistsPanel still loads the heavy 60 MB blob — acceptable for a
-      // rare user-initiated delete), filter, re-save. saveWishlists writes
-      // both the wishlists key and the lightweight metadata key, so the
-      // metadata onChanged listener picks up the change and refreshes the
-      // displayed cache rows. The SW will re-hydrate its in-memory map on
-      // next wake.
-      void import('@/core/storage/scoring-config').then((mod) => {
-        const remaining = mod.loadWishlists().filter((l) => l.id !== source.id);
-        mod.saveWishlists(remaining);
-      });
+      // Tell the SW to drop the cached entries for this source. The SW
+      // re-persists wishlists + metadata after the drop; the metadata
+      // listener here picks up the change and the row disappears.
+      void requestDropSource(source.id);
     },
     [sources, persistSources],
   );
