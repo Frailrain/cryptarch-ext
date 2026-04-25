@@ -1,6 +1,9 @@
 import { useMemo } from 'react';
-import type { DropFeedEntry } from '@/shared/types';
+import type { DropFeedEntry, TierLetter } from '@/shared/types';
 import type { Grade } from '@/core/scoring/types';
+import { TierChip } from '../components/TierChip';
+
+const TIER_FILTER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
 
 export type DropTypeFilter = 'all' | 'weapon' | 'armor';
 export type DropMatchFilter = 'all' | 'matched' | 'not-matched';
@@ -88,6 +91,9 @@ interface DropLogPanelProps {
   showA: boolean;
   showB: boolean;
   showExotic: boolean;
+  // Brief #12: tier visibility set. Untiered drops are unaffected (always
+  // shown) — only drops with weaponTier metadata are subject to this filter.
+  visibleTiers: Set<TierLetter>;
   nowTick: number;
   // When set (from popup deep-link), the matching row renders with
   // pulse-highlight for ~1.5s after scroll-into-view.
@@ -97,10 +103,21 @@ interface DropLogPanelProps {
   onToggleA: () => void;
   onToggleB: () => void;
   onToggleExotic: () => void;
+  onToggleTier: (tier: TierLetter) => void;
 }
 
 export function DropLogPanel(props: DropLogPanelProps) {
-  const { feed, typeFilter, matchFilter, showA, showB, showExotic, nowTick, highlightInstanceId } = props;
+  const {
+    feed,
+    typeFilter,
+    matchFilter,
+    showA,
+    showB,
+    showExotic,
+    visibleTiers,
+    nowTick,
+    highlightInstanceId,
+  } = props;
 
   const weaponFilterRelevant = typeFilter !== 'armor';
   const matchFilterRelevant = typeFilter !== 'weapon';
@@ -117,16 +134,27 @@ export function DropLogPanel(props: DropLogPanelProps) {
       // filter only, not the letter-grade filters.
       if (e.isExotic) return showExotic;
       if (e.itemType === 'weapon') {
-        if (e.grade === 'S') return true;
-        if (e.grade === 'A') return showA;
-        if (e.grade === 'B') return showB;
-        return false;
+        if (e.grade === 'S') {
+          // S-grade always passes the grade gate; tier filter still applies
+          // when the drop has tier metadata.
+        } else if (e.grade === 'A') {
+          if (!showA) return false;
+        } else if (e.grade === 'B') {
+          if (!showB) return false;
+        } else {
+          return false;
+        }
+        // Brief #12 tier filter: only applies to drops that carry tier data.
+        // Untiered drops (Voltron-only matches without Aegis tier references,
+        // pre-#12 entries) are unaffected.
+        if (e.weaponTier && !visibleTiers.has(e.weaponTier)) return false;
+        return true;
       }
       if (matchFilter === 'matched' && e.armorMatched !== true) return false;
       if (matchFilter === 'not-matched' && e.armorMatched !== false) return false;
       return true;
     });
-  }, [feed, typeFilter, matchFilter, showA, showB, showExotic]);
+  }, [feed, typeFilter, matchFilter, showA, showB, showExotic, visibleTiers]);
 
   return (
     <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-4">
@@ -187,6 +215,20 @@ export function DropLogPanel(props: DropLogPanelProps) {
               Exotic
             </button>
           </div>
+          {weaponFilterRelevant && (
+            <div className="flex items-center gap-1">
+              <span className="text-text-muted mr-1">Tier</span>
+              {TIER_FILTER_ORDER.map((tier) => (
+                <TierChip
+                  key={tier}
+                  tier={tier}
+                  active={visibleTiers.has(tier)}
+                  onClick={() => props.onToggleTier(tier)}
+                  title={`Tier ${tier}`}
+                />
+              ))}
+            </div>
+          )}
           {matchFilterRelevant && (
             <FilterGroup
               label="Match"
@@ -303,12 +345,21 @@ function DropLogRow({
           {entry.itemName}
         </div>
         <div className="text-xs text-text-muted truncate">{subtitle}</div>
-        {/* Wishlist source tags. Own row below subtitle so 3+ matches don't
-            wedge against the perk icons / grade chip on the right. Optional
-            chain guards pre-#11 entries that lack the field. */}
-        {entry.wishlistMatches && entry.wishlistMatches.length > 0 && (
+        {/* Brief #12 tier chip + Brief #11 wishlist source tags on the same
+            row below the subtitle. Tier chip leftmost so it reads as the
+            overall verdict; source chips follow as provenance detail. Row
+            renders if EITHER tier OR matches exist; guards keep pre-#11
+            and pre-#12 entries rendering cleanly. */}
+        {(entry.weaponTier ||
+          (entry.wishlistMatches && entry.wishlistMatches.length > 0)) && (
           <div className="mt-1 flex flex-wrap items-center gap-1">
-            {entry.wishlistMatches.map((m) => (
+            {entry.weaponTier && (
+              <TierChip
+                tier={entry.weaponTier}
+                title={`Best tier across matching sources: ${entry.weaponTier}`}
+              />
+            )}
+            {entry.wishlistMatches?.map((m) => (
               <span
                 key={m.sourceId}
                 title={m.notes || m.sourceName}

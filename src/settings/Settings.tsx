@@ -17,6 +17,7 @@ import type {
   ArmorTaxonomyPayload,
   AutolockFailedPayload,
   PendingNavigation,
+  TierLetter,
 } from '@/shared/types';
 import { removeItem } from '@/adapters/storage';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
@@ -57,6 +58,12 @@ export function Settings() {
   const [showA, setShowA] = useState(true);
   const [showB, setShowB] = useState(false);
   const [showExotic, setShowExotic] = useState(true);
+  // Brief #12: Drop Log tier filter visibility set. Defaults to all-on so tier
+  // chips don't silently hide drops on first paint. Component-local state to
+  // match the existing showA/showB pattern (no persistence across reloads).
+  const [visibleTiers, setVisibleTiers] = useState<Set<TierLetter>>(
+    () => new Set<TierLetter>(['S', 'A', 'B', 'C', 'D', 'F']),
+  );
   const [authState, setAuthState] = useState<AuthState>(() => loadAuthState());
   const [expiredBannerDismissed, setExpiredBannerDismissed] = useState(false);
   const [manifestReady, setManifestReady] = useState<boolean>(
@@ -317,6 +324,7 @@ export function Settings() {
                   showA={showA}
                   showB={showB}
                   showExotic={showExotic}
+                  visibleTiers={visibleTiers}
                   nowTick={nowTick}
                   highlightInstanceId={highlightInstanceId}
                   onTypeFilterChange={setTypeFilter}
@@ -324,6 +332,14 @@ export function Settings() {
                   onToggleA={() => setShowA((v) => !v)}
                   onToggleB={() => setShowB((v) => !v)}
                   onToggleExotic={() => setShowExotic((v) => !v)}
+                  onToggleTier={(tier) =>
+                    setVisibleTiers((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(tier)) next.delete(tier);
+                      else next.add(tier);
+                      return next;
+                    })
+                  }
                 />
               </>
             )}
