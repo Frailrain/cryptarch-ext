@@ -7,7 +7,7 @@ import { send } from '@/shared/messaging';
 import type { DropFeedEntry } from '@/shared/types';
 import { DropLogPanel, type DropTypeFilter, type DropMatchFilter } from './tabs/DropLogPanel';
 import { RulesPanel } from './tabs/RulesPanel';
-import { WishlistsPanel } from './tabs/WishlistsPanel';
+import { WeaponsPanel } from './tabs/WeaponsPanel';
 import { WishlistTestPanel } from './components/WishlistTestPanel';
 import { SessionExpiredBanner } from './components/SessionExpiredBanner';
 import { ManifestLoadingCard } from './components/ManifestLoadingCard';
@@ -336,7 +336,7 @@ export function Settings() {
               />
             )}
 
-            {tab === 'weapons' && <WishlistsPanel />}
+            {tab === 'weapons' && <WeaponsPanel />}
           </>
         )}
 

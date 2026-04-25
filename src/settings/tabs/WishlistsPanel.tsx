@@ -17,7 +17,7 @@ type RowState =
   | { kind: 'fetching' }
   | { kind: 'error'; message: string };
 
-export function WishlistsPanel() {
+export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } = {}) {
   const [sources, setSources] = useState<WishlistSource[]>(() => loadWishlistSources());
   const [cachedLists, setCachedLists] = useState<ImportedWishList[]>(() => loadWishlists());
   const [rowStates, setRowStates] = useState<Map<string, RowState>>(new Map());
@@ -232,13 +232,15 @@ export function WishlistsPanel() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-2">
-        <h2 className="text-base font-semibold">Wishlist Sources</h2>
-        <p className="text-sm text-text-muted">
-          Cryptarch scores your weapon drops against curated community wishlists. Enable the
-          sources you trust. Sources refresh at most once per 24 hours.
-        </p>
-      </div>
+      {showHeader && (
+        <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-2">
+          <h2 className="text-base font-semibold">Wishlist Sources</h2>
+          <p className="text-sm text-text-muted">
+            Cryptarch scores your weapon drops against curated community wishlists. Enable the
+            sources you trust. Sources refresh at most once per 24 hours.
+          </p>
+        </div>
+      )}
 
       <section className="space-y-2">
         <div className="text-xs uppercase tracking-wide text-text-muted px-1">Built-in sources</div>
