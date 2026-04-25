@@ -196,6 +196,15 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
 // debug-wishlists.ts for usage.
 installWishlistDebug();
 
+// Warm the wishlist cache on every SW wake, not just when handlePollAlarm runs.
+// Otherwise debug helpers and message handlers that don't await
+// ensureWishlistCacheReady themselves see an empty Map even though storage is
+// fully populated. Fire-and-forget; concurrent awaits in handlers all share the
+// same hydration promise via ensureLoaded() and the idempotent `hydrated` flag.
+void ensureWishlistCacheReady().catch((err) => {
+  logError('sw', 'wishlist cache warm-up failed', err);
+});
+
 // Synthesize a DropFeedEntry from a test-handler outcome and append it to the
 // feed. Mirrors the shape produced by handleNewDrops in controller.ts so the
 // drop renders identically in DropLogPanel — same grade chip, same wishlist

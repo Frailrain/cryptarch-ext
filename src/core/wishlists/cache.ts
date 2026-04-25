@@ -157,7 +157,10 @@ function persistCache(): void {
 // comparison below makes the re-process a no-op since the Map already holds the
 // just-written list with the same timestamp.
 onKeyChanged<ImportedWishList[]>('wishlists', (newValue) => {
-  if (!hydrated) return; // initial hydration via hydrateWishlistCache handles cold start
+  // Don't gate on `hydrated`. If the SW wakes for a handler that didn't go
+  // through ensureWishlistCacheReady, this listener serves as the cold-path
+  // initializer too. `hydrated` gets set below so subsequent calls to
+  // hydrateWishlistCache are no-ops.
   const incoming = new Map<string, ImportedWishList>();
   if (newValue) {
     for (const list of newValue) {
@@ -188,4 +191,7 @@ onKeyChanged<ImportedWishList[]>('wishlists', (newValue) => {
       });
     }
   }
+  // Mark hydrated so subsequent hydrateWishlistCache calls short-circuit
+  // instead of re-reading from storage redundantly.
+  hydrated = true;
 });
