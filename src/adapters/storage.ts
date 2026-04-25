@@ -88,6 +88,35 @@ export async function ensureLoadedSubset(keys: string[]): Promise<void> {
   }
 }
 
+/**
+ * Lazy-extend the cache with additional keys after an initial ensureLoadedSubset.
+ * Used by panels (e.g. WishlistsPanel) that need a heavy key the dashboard
+ * subset deliberately skipped to keep first-paint fast. Idempotent — keys
+ * already present in cache are skipped.
+ *
+ * Also extends `allowedKeys` so that subsequent onChanged events for these
+ * keys update the cache instead of being filtered out by the subset gate.
+ */
+export async function loadAdditionalKeys(keys: string[]): Promise<void> {
+  if (!cache) {
+    throw new Error(
+      'storage adapter not initialized; call ensureLoaded or ensureLoadedSubset before loadAdditionalKeys',
+    );
+  }
+  const fullKeys = keys.map((k) => PREFIX + k);
+  if (allowedKeys) {
+    for (const k of fullKeys) allowedKeys.add(k);
+  }
+  const missing = fullKeys.filter((k) => !(k in cache!));
+  if (missing.length === 0) return;
+  const requestObj: Record<string, null> = {};
+  for (const k of missing) requestObj[k] = null;
+  const result = await chrome.storage.local.get(requestObj);
+  for (const [k, v] of Object.entries(result ?? {})) {
+    if (v !== null) cache![k] = v;
+  }
+}
+
 function assertLoaded(): Record<string, unknown> {
   if (!cache) {
     throw new Error(

@@ -6,7 +6,7 @@ import {
   saveWishlistSources,
   loadWishlists,
 } from '@/core/storage/scoring-config';
-import { onKeyChanged } from '@/adapters/storage';
+import { loadAdditionalKeys, onKeyChanged } from '@/adapters/storage';
 import { refreshOne, refreshWishlists, validateWishlistUrl } from '@/core/wishlists/fetch';
 
 // Per-source UI state machine. The persisted FetchStatus in cache.ts only lives
@@ -54,13 +54,23 @@ export function WishlistsPanel() {
     return () => window.clearInterval(id);
   }, []);
 
-  // On mount, kick a stale-only refresh of enabled sources. The 24h staleness
-  // check inside refreshOne short-circuits sources that are still fresh, so
-  // opening the tab repeatedly is cheap.
+  // On mount: lazy-load the wishlists storage key (excluded from the dashboard
+  // boot subset to keep first paint fast), then kick a stale-only refresh.
+  // The 24h staleness check inside refreshOne short-circuits sources that are
+  // still fresh, so opening the tab repeatedly is cheap.
   useEffect(() => {
-    void refreshWishlists(loadWishlistSources()).catch(() => {});
-    // Intentionally empty deps — once-on-mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    void (async () => {
+      await loadAdditionalKeys(['wishlists']);
+      if (cancelled) return;
+      // Refresh state from the now-populated cache so entry counts and
+      // last-updated timestamps render on this tab's first paint.
+      setCachedLists(loadWishlists());
+      void refreshWishlists(loadWishlistSources()).catch(() => {});
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const cacheById = useMemo(() => {
