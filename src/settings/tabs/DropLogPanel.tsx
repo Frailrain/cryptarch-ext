@@ -102,24 +102,17 @@ export function DropLogPanel(props: DropLogPanelProps) {
 
   const visible = useMemo(() => {
     return feed.filter((e) => {
-      const isTestDrop = e.instanceId.startsWith('debug-test-');
-
-      // Test drops bypass type / grade / exotic filters so the test affordance
-      // doesn't hide its own output. They DO respect the tier filter — otherwise
-      // there's no way to verify tier filtering via the in-page test panel.
-      if (isTestDrop) {
-        if (e.weaponTier && !visibleTiers.has(e.weaponTier)) return false;
-        return true;
-      }
-
+      // No test-drop bypass: all filters apply uniformly. The original bypass
+      // existed to keep test drops visible when grade filters might hide them,
+      // but grade chips are no longer in the filter row, and users testing the
+      // type/match/tier filters now expect them to work on test drops too.
+      // The "[Test]" name prefix is enough visual distinction.
       if (typeFilter !== 'all' && e.itemType !== typeFilter) return false;
       if (e.isExotic) return showExotic;
       if (e.itemType === 'weapon') {
-        // Brief #12 follow-up: grade chips removed from the UI; the underlying
-        // grade field still drives notification thresholds (until Part H rewires
-        // them to WeaponFilterConfig). Drop Log no longer hides drops by grade.
-        // Tier filter still applies when the drop has tier metadata; untiered
-        // drops always pass.
+        // Tier filter only applies to drops with weaponTier metadata; untiered
+        // drops (Voltron-only matches without Aegis tier references, pre-#12
+        // entries) always pass.
         if (e.weaponTier && !visibleTiers.has(e.weaponTier)) return false;
         return true;
       }
