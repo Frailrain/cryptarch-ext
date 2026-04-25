@@ -17,7 +17,6 @@ export type MessageType =
   | 'lock-drop'
   // Brief #12.5 Part D: dashboard delegates all wishlist mutations to the SW.
   // Settings page is a viewer; the SW owns fetching/parsing/persisting.
-  | 'wishlists:refreshAll'
   | 'wishlists:refreshOne'
   | 'wishlists:validateUrl'
   | 'wishlists:dropSource';

@@ -27,11 +27,6 @@ export type ValidationResult =
   | { ok: true; entryCount: number }
   | { ok: false; error: string };
 
-interface RefreshAllResponse {
-  ok: true;
-  payload: { results: RefreshResultLite[] };
-}
-
 interface RefreshOneResponse {
   ok: true;
   payload: { result: RefreshResultLite };
@@ -47,19 +42,6 @@ interface OkOnlyResponse {
 }
 
 type ErrorResponse = { ok: false; error?: string };
-
-export async function requestRefreshAll(
-  force = true,
-): Promise<{ ok: true; results: RefreshResultLite[] } | { ok: false; error: string }> {
-  const resp = await send<RefreshAllResponse | ErrorResponse>({
-    type: 'wishlists:refreshAll',
-    payload: { force },
-  });
-  if (!resp || !resp.ok) {
-    return { ok: false, error: resp?.error ?? 'No response from background worker' };
-  }
-  return { ok: true, results: resp.payload.results };
-}
 
 export async function requestRefreshOne(
   sourceId: string,

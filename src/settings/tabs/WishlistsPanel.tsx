@@ -12,7 +12,6 @@ import { onKeyChanged } from '@/adapters/storage';
 // at the top of cache.ts for why.
 import {
   requestDropSource,
-  requestRefreshAll,
   requestRefreshOne,
   requestValidateUrl,
 } from '@/adapters/wishlist-messages';
@@ -35,8 +34,6 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
     loadWishlistMetadata(),
   );
   const [rowStates, setRowStates] = useState<Map<string, RowState>>(new Map());
-  const [refreshAllPending, setRefreshAllPending] = useState(false);
-  const [refreshAllToast, setRefreshAllToast] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
 
   // Custom URL form state.
@@ -69,13 +66,14 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
     return () => window.clearInterval(id);
   }, []);
 
-  // Brief #12.5 Part D: no auto-refresh on mount. The previous version called
-  // refreshWishlists in the settings context, which (with an empty
-  // settings-context status map) failed every isStale check and re-fetched
-  // every enabled source — a 30-second freeze every Weapons-tab open. The SW
-  // does its own staleness-checked refresh on each wake; manual refresh from
-  // the user goes through the message handlers (Refresh All / per-row Refresh
-  // buttons below).
+  // No auto-refresh on mount, and no manual Refresh buttons either. The SW
+  // owns refresh: on each wake it hydrates the cache and kicks a
+  // staleness-checked refresh in the background, so any source older than 24h
+  // gets re-fetched without page involvement. Earlier versions had a
+  // mount-time refreshWishlists call here (and Refresh All / per-row Refresh
+  // buttons below); both were removed because the 60 MB write back to
+  // chrome.storage.local fans out via onChanged to every page that has a
+  // listener registered, which froze the dashboard for 10–30s on every open.
 
   const cacheById = useMemo(() => {
     const m = new Map<string, WishlistMetadata>();
@@ -117,53 +115,6 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
     },
     [sources, persistSources, setRowState],
   );
-
-  const handleRefreshOne = useCallback(
-    async (source: WishlistSource) => {
-      setRowState(source.id, { kind: 'fetching' });
-      const result = await requestRefreshOne(source.id, true);
-      setRowState(
-        source.id,
-        result.ok ? { kind: 'idle' } : { kind: 'error', message: result.error },
-      );
-    },
-    [setRowState],
-  );
-
-  const handleRefreshAll = useCallback(async () => {
-    setRefreshAllPending(true);
-    setRefreshAllToast(null);
-    const enabled = sources.filter((s) => s.enabled);
-    for (const s of enabled) setRowState(s.id, { kind: 'fetching' });
-    const response = await requestRefreshAll(true);
-    if (!response.ok) {
-      for (const s of enabled) {
-        setRowState(s.id, { kind: 'error', message: response.error });
-      }
-      setRefreshAllToast(`Refresh failed: ${response.error}`);
-      setRefreshAllPending(false);
-      window.setTimeout(() => setRefreshAllToast(null), 4000);
-      return;
-    }
-    const results = response.results;
-    for (const result of results) {
-      setRowState(
-        result.sourceId,
-        result.ok
-          ? { kind: 'idle' }
-          : { kind: 'error', message: result.error ?? 'Fetch failed' },
-      );
-    }
-    setRefreshAllPending(false);
-    const okCount = results.filter((r) => r.ok).length;
-    const failCount = results.length - okCount;
-    setRefreshAllToast(
-      failCount === 0
-        ? `Refreshed ${okCount} source${okCount === 1 ? '' : 's'}.`
-        : `Refreshed ${okCount}, ${failCount} failed.`,
-    );
-    window.setTimeout(() => setRefreshAllToast(null), 4000);
-  }, [sources, setRowState]);
 
   const handleAddCustom = useCallback(async () => {
     setAddError(null);
@@ -260,7 +211,6 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
               rowState={rowStates.get(source.id) ?? { kind: 'idle' }}
               nowTick={nowTick}
               onToggle={(enabled) => void handleToggle(source, enabled)}
-              onRefresh={() => void handleRefreshOne(source)}
             />
           ))}
         </div>
@@ -280,7 +230,6 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
                 rowState={rowStates.get(source.id) ?? { kind: 'idle' }}
                 nowTick={nowTick}
                 onToggle={(enabled) => void handleToggle(source, enabled)}
-                onRefresh={() => void handleRefreshOne(source)}
                 onDelete={() => handleDeleteCustom(source)}
                 onRename={(name) => handleRenameCustom(source, name)}
               />
@@ -327,18 +276,6 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
         </div>
       </section>
 
-      <div className="flex items-center justify-between gap-4 pt-2">
-        <div className="text-xs text-text-muted">
-          {refreshAllToast ?? 'Refresh forces a fetch of all enabled sources.'}
-        </div>
-        <button
-          onClick={() => void handleRefreshAll()}
-          disabled={refreshAllPending}
-          className="px-4 py-2 text-sm rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {refreshAllPending ? 'Refreshing…' : 'Refresh all'}
-        </button>
-      </div>
     </div>
   );
 }
@@ -349,7 +286,6 @@ function SourceRow({
   rowState,
   nowTick,
   onToggle,
-  onRefresh,
   onDelete,
   onRename,
 }: {
@@ -358,7 +294,6 @@ function SourceRow({
   rowState: RowState;
   nowTick: number;
   onToggle: (enabled: boolean) => void;
-  onRefresh: () => void;
   onDelete?: () => void;
   onRename?: (name: string) => void;
 }) {
@@ -449,16 +384,8 @@ function SourceRow({
         )}
       </div>
 
-      <div className="flex items-center gap-2 pt-0.5">
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={rowState.kind === 'fetching' || !source.enabled}
-          className="text-xs px-2 py-1 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {rowState.kind === 'fetching' ? '…' : 'Refresh'}
-        </button>
-        {onDelete && (
+      {onDelete && (
+        <div className="flex items-center gap-2 pt-0.5">
           <button
             type="button"
             onClick={onDelete}
@@ -466,8 +393,8 @@ function SourceRow({
           >
             Delete
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

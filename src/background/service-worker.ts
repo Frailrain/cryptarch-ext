@@ -38,11 +38,7 @@ import {
   removeFromCache,
 } from '@/core/wishlists/cache';
 import { resolveBestTier } from '@/core/wishlists/matcher';
-import {
-  refreshOne,
-  refreshWishlists,
-  validateWishlistUrl,
-} from '@/core/wishlists/fetch';
+import { refreshOne, validateWishlistUrl } from '@/core/wishlists/fetch';
 import { runPollCycle } from '@/core/bungie/inventory';
 import { loadPrimaryMembership } from '@/core/storage/tokens';
 import { loadArmorRules } from '@/core/rules/armor-rules';
@@ -52,11 +48,10 @@ import {
 } from '@/core/storage/scoring-config';
 import { scoreItem } from '@/core/scoring/engine';
 
-// In-flight guards for wishlist refresh messages. SW is the single owner of
-// refresh; if multiple clicks arrive (or refreshAll + refreshOne overlap on
-// the same source), they share the same Promise so callers resolve together
+// In-flight guard for per-source wishlist refresh. SW is the single owner of
+// refresh; if multiple refreshOne calls for the same source arrive while one
+// is mid-flight, they share the same Promise so callers resolve together
 // rather than triggering parallel fetches.
-let refreshAllInFlight: Promise<unknown> | null = null;
 const refreshOneInFlight = new Map<string, Promise<unknown>>();
 
 async function ensurePollAlarm(): Promise<void> {
@@ -127,29 +122,6 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
       if (msg.type === 'retry-manifest') {
         void handleRetryManifest();
         sendResponse({ ok: true });
-        return;
-      }
-      if (msg.type === 'wishlists:refreshAll') {
-        // In-flight guard: a second click while refresh is running awaits
-        // the SAME promise so both callers resolve together. SW is the only
-        // refresh owner — settings/popup never run the fetch chain.
-        const force = Boolean((msg.payload as { force?: boolean } | undefined)?.force);
-        await hydrateWishlistCacheForWorker();
-        if (!refreshAllInFlight) {
-          refreshAllInFlight = refreshWishlists(loadWishlistSources(), { force });
-          void refreshAllInFlight.finally(() => {
-            refreshAllInFlight = null;
-          });
-        }
-        try {
-          const results = await refreshAllInFlight;
-          sendResponse({ ok: true, payload: { results } });
-        } catch (err) {
-          sendResponse({
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
         return;
       }
       if (msg.type === 'wishlists:refreshOne') {
