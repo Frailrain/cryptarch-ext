@@ -21,6 +21,7 @@ import {
 } from './controller';
 import type { Message } from '@/shared/messaging';
 import {
+  cacheSummary,
   findMultiSourceItems,
   installWishlistDebug,
   testFallback,
@@ -108,22 +109,22 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         return;
       }
       if (msg.type === 'wishlist-test-multi-source') {
-        // Hydrate the wishlist cache before discovery — this handler doesn't go
-        // through handlePollAlarm, so on a fresh worker wake the in-memory Map
-        // is empty until we ask for it. Without this await, findMultiSourceItems
-        // would always return [] on first invocation per wake.
+        // ensureWishlistCacheReady is also awaited inside findMultiSourceItems
+        // and cacheSummary now, but call it here too so the diagnostic snapshot
+        // below sees the same warm cache the discovery does.
         await ensureWishlistCacheReady();
-        // Find a hash flagged by 2+ enabled sources, then run it through the
-        // matcher. Empty result is a real, expected outcome — surface it
-        // explicitly so the UI can guide the user.
-        const candidates = findMultiSourceItems(2, 1);
+        const candidates = await findMultiSourceItems(2, 1);
         if (candidates.length === 0) {
+          // Include diagnostic snapshot so the UI can show why discovery came
+          // up empty without sending the user to the SW console.
+          const summary = await cacheSummary();
           sendResponse({
             ok: true,
             payload: {
               ok: false,
               message:
-                'No items found matching 2+ enabled sources. Enable additional wishlists in the Wishlists tab to test multi-source matching.',
+                'No items found matching 2+ enabled sources. See diagnostic below to confirm the SW sees what you expect.',
+              diagnostic: summary,
             },
           });
           return;

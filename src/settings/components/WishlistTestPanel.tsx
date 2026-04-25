@@ -8,6 +8,13 @@ import { send } from '@/shared/messaging';
 // renders the results inline so verifying multi-source matcher behavior doesn't
 // require opening the SW devtools console.
 
+interface CacheSummaryRow {
+  id: string;
+  name: string;
+  entryCount: number;
+  enabled: boolean;
+}
+
 type MultiSourcePayload =
   | {
       ok: true;
@@ -18,7 +25,7 @@ type MultiSourcePayload =
       reasons: string[];
       perks: number[];
     }
-  | { ok: false; message: string };
+  | { ok: false; message: string; diagnostic?: CacheSummaryRow[] };
 
 interface FallbackPayload {
   grade: Grade | null;
@@ -106,8 +113,34 @@ export function WishlistTestPanel() {
 function MultiSourceResultView({ data }: { data: MultiSourcePayload }) {
   if (!data.ok) {
     return (
-      <div className="rounded border border-bg-border bg-bg-primary p-3 text-xs text-text-muted">
-        {data.message}
+      <div className="rounded border border-bg-border bg-bg-primary p-3 text-xs text-text-muted space-y-2">
+        <div>{data.message}</div>
+        {data.diagnostic && (
+          <div className="space-y-1">
+            <div className="font-medium text-text-primary">
+              SW cache snapshot ({data.diagnostic.length} {data.diagnostic.length === 1 ? 'list' : 'lists'}):
+            </div>
+            {data.diagnostic.length === 0 ? (
+              <div className="text-red-400">
+                Cache is empty. Storage write must not be reaching the SW. Refresh a source in the
+                Wishlists tab and try again.
+              </div>
+            ) : (
+              <ul className="space-y-0.5 pl-3">
+                {data.diagnostic.map((row) => (
+                  <li key={row.id}>
+                    <span className={row.enabled ? 'text-rahool-blue' : 'text-text-muted'}>
+                      {row.name}
+                    </span>
+                    {' — '}
+                    <span className="text-text-primary">{row.entryCount.toLocaleString()} rolls</span>
+                    {!row.enabled && <span className="text-text-muted"> (disabled)</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     );
   }

@@ -83,12 +83,14 @@ function buildSyntheticDrop(
   };
 }
 
-function enabledSources() {
+async function enabledSources() {
+  await ensureWishlistCacheReady();
   return loadWishlistSources().filter((s) => s.enabled);
 }
 
-function cacheSummary() {
-  const enabledIds = new Set(enabledSources().map((s) => s.id));
+async function cacheSummary() {
+  await ensureWishlistCacheReady();
+  const enabledIds = new Set(loadWishlistSources().filter((s) => s.enabled).map((s) => s.id));
   return getAllCachedLists().map((l) => ({
     id: l.id,
     name: l.name,
@@ -105,8 +107,14 @@ function cacheSummary() {
  * Returned `samplePerks` come from the first matching keeper entry encountered —
  * good for handing straight to testMatch as a guaranteed-match fixture.
  */
-function findMultiSourceItems(minSources = 2, limit = 10): MultiSourceItem[] {
-  const enabledIds = new Set(enabledSources().map((s) => s.id));
+async function findMultiSourceItems(
+  minSources = 2,
+  limit = 10,
+): Promise<MultiSourceItem[]> {
+  await ensureWishlistCacheReady();
+  const enabledIds = new Set(
+    loadWishlistSources().filter((s) => s.enabled).map((s) => s.id),
+  );
   const lists = getAllCachedLists().filter((l) => enabledIds.has(l.id));
 
   // itemHash → { sources: Set, perks: number[] }
@@ -155,7 +163,9 @@ async function testMatch(itemHash: number, perks?: number[]): Promise<TestMatchO
 
   let usePerks = perks;
   if (!usePerks) {
-    const enabledIds = new Set(enabledSources().map((s) => s.id));
+    const enabledIds = new Set(
+      loadWishlistSources().filter((s) => s.enabled).map((s) => s.id),
+    );
     for (const list of getAllCachedLists()) {
       if (!enabledIds.has(list.id)) continue;
       const found = list.entries.find(
@@ -231,4 +241,4 @@ export function installWishlistDebug(): void {
 // Re-exported for the SW message handlers that back the in-UI test panel.
 // Same surface as the console helpers — the panel just calls them via
 // chrome.runtime.sendMessage instead of typing into devtools.
-export { findMultiSourceItems, testMatch, testFallback };
+export { cacheSummary, findMultiSourceItems, testMatch, testFallback };
