@@ -41,6 +41,8 @@ export interface ArmorRoll {
 import type { ArmorRule } from '@/core/rules/armor-rules';
 export type { ArmorRule };
 
+import type { WishlistMatch } from '@/shared/types';
+
 export interface WishListEntry {
   sourceListId: string;
   itemHash: number;
@@ -72,8 +74,11 @@ export type AlertThreshold = 'S' | 'SA' | 'all';
 
 export type NotificationThreshold = 'S' | 'SA' | 'SAB';
 
+// Brief #11 Part D: `wishlists: ImportedWishList[]` removed. The matcher now
+// reads from the wishlist cache (src/core/wishlists/cache.ts) directly, so
+// scoring no longer needs the parsed lists injected via config. ImportedWishList
+// is still defined above and used by the parser, cache, and storage helpers.
 export interface ScoringConfig {
-  wishlists: ImportedWishList[];
   customRules: CustomRule[];
   armorRules: ArmorRule[];
   alertThreshold: AlertThreshold;
@@ -82,13 +87,17 @@ export interface ScoringConfig {
   excludeCrafted: boolean;
 }
 
+// Brief #11 Part D: replaced single `matchedWishListEntry: WishListEntry | null`
+// with `wishlistMatches: WishlistMatch[]`. The matcher now returns one match per
+// flagging source (keeper-wins semantics; trash matches don't appear here but
+// still drive the D grade via the engine's winner inspection).
 export interface ScoreResult {
   shouldAlert: boolean;
   shouldAutoLock: boolean;
   grade: Grade | null;
   armorMatched: boolean | null;
   matchedArmorRule: ArmorRule | null;
-  matchedWishListEntry: WishListEntry | null;
+  wishlistMatches: WishlistMatch[];
   matchedCustomRule: CustomRule | null;
   isTrash: boolean;
   excluded: boolean;
@@ -97,7 +106,6 @@ export interface ScoreResult {
 }
 
 export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
-  wishlists: [],
   customRules: [],
   armorRules: [],
   alertThreshold: 'SA',

@@ -17,6 +17,27 @@ export interface InventoryPollStatus {
   itemsKnown: number;
 }
 
+// One curated or user-added wishlist source. Stored in chrome.storage under
+// the wishlistSources key. The parsed entries live separately as
+// ImportedWishList[] keyed by source id.
+export interface WishlistSource {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  builtin: boolean;
+  description?: string;
+}
+
+// One match between a drop and a wishlist source. A drop may have zero, one,
+// or many of these. Brief #12 may add: parsedMetadata?: { weaponTier?: string;
+// perksMatched?: number } — keep this shape extensible.
+export interface WishlistMatch {
+  sourceId: string;
+  sourceName: string;
+  notes?: string;
+}
+
 export interface DropFeedEntry {
   instanceId: string;
   itemName: string;
@@ -45,6 +66,9 @@ export interface DropFeedEntry {
   // DELETION_CONFIRM_CYCLES consecutive polls (~90s). UI shows the row with
   // strikethrough / muted styling. Once deleted, the row never flips back.
   deleted?: boolean;
+  // Wishlist sources that flagged this drop. Absent on drops captured before
+  // Brief #11 — UI must guard with optional chaining.
+  wishlistMatches?: WishlistMatch[];
 }
 
 export interface DropLockUpdatedPayload {

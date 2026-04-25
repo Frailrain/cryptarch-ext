@@ -2,7 +2,7 @@ import { ItemType, type NewItemDrop } from '@/shared/types';
 import { evaluateArmorRules } from '@/core/rules/armor-rules';
 import { parseArmorRoll } from './armor-roll';
 import { evaluateCustomRules } from './custom-rules';
-import { matchDropAgainstWishlists } from './wishlist-matcher';
+import { matchDropAgainstWishlists } from '@/core/wishlists/matcher';
 import type {
   ArmorRoll,
   ArmorRule,
@@ -10,8 +10,8 @@ import type {
   Grade,
   ScoreResult,
   ScoringConfig,
-  WishListEntry,
 } from './types';
+import type { WishlistMatch } from '@/shared/types';
 
 function describeArmorRoll(roll: ArmorRoll): string {
   if (roll.isLegacyArmor) return 'legacy armor';
@@ -28,7 +28,7 @@ function baseResult(armorRoll: ArmorRoll | null): ScoreResult {
     grade: null,
     armorMatched: null,
     matchedArmorRule: null,
-    matchedWishListEntry: null,
+    wishlistMatches: [],
     matchedCustomRule: null,
     shouldAlert: false,
     shouldAutoLock: false,
@@ -146,7 +146,7 @@ function scoreWeapon(
     grade: Grade | null,
     extras: {
       reasons: string[];
-      matchedWishListEntry?: WishListEntry | null;
+      wishlistMatches?: WishlistMatch[];
       matchedCustomRule?: CustomRule | null;
       isTrash?: boolean;
     },
@@ -167,7 +167,7 @@ function scoreWeapon(
       shouldAlert,
       shouldAutoLock: grade === 'S' && !isExoticWeapon,
       isTrash: extras.isTrash ?? false,
-      matchedWishListEntry: extras.matchedWishListEntry ?? null,
+      wishlistMatches: extras.wishlistMatches ?? [],
       matchedCustomRule: extras.matchedCustomRule ?? null,
       reasons: extras.reasons,
     };
@@ -181,20 +181,29 @@ function scoreWeapon(
     });
   }
 
-  const matchedEntry = matchDropAgainstWishlists(drop, config.wishlists, enhancedPerkMap);
-  if (matchedEntry?.isTrash) {
+  // Matcher reads from the in-memory wishlist cache (hydrated at controller
+  // startup). The keeperMatches array carries one entry per source whose keeper
+  // entries flagged this drop — passed through to DropFeedEntry.wishlistMatches
+  // for UI rendering. The winner entry drives the grade decision (keeper-wins
+  // semantics: see matcher.ts docblock for the full rationale).
+  const matchResult = matchDropAgainstWishlists(drop, enhancedPerkMap);
+  const winnerEntry = matchResult.winner?.entry ?? null;
+  if (winnerEntry?.isTrash) {
     return {
       ...baseResult(armorRoll),
       grade: 'D',
-      matchedWishListEntry: matchedEntry,
+      // Trash matches deliberately don't populate wishlistMatches — that array
+      // is for keeper-flagged source provenance shown in the Drop Log. Trash is
+      // signalled to the user via the D grade and the Trashlist reason string.
+      wishlistMatches: [],
       isTrash: true,
-      reasons: [`Trashlist match${matchedEntry.notes ? `: ${matchedEntry.notes}` : ''}`],
+      reasons: [`Trashlist match${winnerEntry.notes ? `: ${winnerEntry.notes}` : ''}`],
     };
   }
-  if (matchedEntry) {
+  if (winnerEntry) {
     return buildResult('S', {
-      matchedWishListEntry: matchedEntry,
-      reasons: [`Wishlist match${matchedEntry.notes ? `: ${matchedEntry.notes}` : ''}`],
+      wishlistMatches: matchResult.keeperMatches,
+      reasons: [`Wishlist match${winnerEntry.notes ? `: ${winnerEntry.notes}` : ''}`],
     });
   }
 

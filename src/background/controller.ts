@@ -28,10 +28,8 @@ import {
 } from '@/core/bungie/inventory';
 import { scoreItem } from '@/core/scoring/engine';
 import { loadArmorRules } from '@/core/rules/armor-rules';
-import {
-  loadScoringConfig,
-  loadWishlists,
-} from '@/core/storage/scoring-config';
+import { loadScoringConfig } from '@/core/storage/scoring-config';
+import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import {
   appendToFeed,
   getFeedEntry,
@@ -170,6 +168,11 @@ export async function handleGetArmorTaxonomy(): Promise<ArmorTaxonomyPayload> {
 
 export async function handlePollAlarm(): Promise<void> {
   await ensureLoaded();
+  // Wishlist cache must be warm before scoring runs. ensureWishlistCacheReady
+  // is idempotent within a worker wake — first call hydrates from storage and
+  // fires a background refresh of stale enabled sources; subsequent calls are
+  // no-ops. The cache is read by the matcher synchronously at scoring time.
+  await ensureWishlistCacheReady();
 
   if (!isLoggedIn()) {
     // Differentiate: tokens-but-expired (banner-worthy) vs no-tokens-yet
@@ -262,7 +265,9 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
 
   const config = loadScoringConfig();
   config.armorRules = loadArmorRules();
-  config.wishlists = loadWishlists();
+  // Brief #11 Part D: scoring no longer needs config.wishlists — the matcher
+  // reads from the wishlist cache directly, hydrated above by
+  // ensureWishlistCacheReady().
 
   // Manifest + enhancedPerkMap are needed by the scoring engine. If the manifest
   // hasn't downloaded yet we fall back to an empty map — weapon wishlist
@@ -311,6 +316,11 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
         : null,
       isExotic: drop.tierType === 'Exotic',
       characterId: drop.characterId,
+      // Omit the field entirely when there are no matches so legacy entries
+      // (pre-#11) and no-match entries render identically through optional
+      // chaining downstream. UI treats absent and empty as equivalent.
+      wishlistMatches:
+        result.wishlistMatches.length > 0 ? result.wishlistMatches : undefined,
     };
     appendToFeed(entry);
     markFirstSeen(entry.instanceId, drop.detectedAt);
@@ -542,7 +552,7 @@ function broadcastAutolockFailed(entry: DropFeedEntry): void {
 export async function retryPendingAutolocks(): Promise<void> {
   const config = loadScoringConfig();
   config.armorRules = loadArmorRules();
-  config.wishlists = loadWishlists();
+  // Brief #11 Part D: see comment in handlePollAlarm. Matcher reads from cache.
   const feed = loadFeed();
   const candidates = feed.filter((entry) => {
     if (entry.locked) return false;
