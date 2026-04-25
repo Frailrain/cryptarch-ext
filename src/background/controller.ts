@@ -60,7 +60,7 @@ import {
   type DestinyMembership,
 } from '@/core/storage/tokens';
 import { showNotification } from '@/adapters/notifications';
-import type { NotificationThreshold, ScoringConfig } from '@/core/scoring/types';
+import type { ScoringConfig } from '@/core/scoring/types';
 import type {
   ArmorTaxonomyPayload,
   AutolockFailedPayload,
@@ -337,9 +337,9 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
     };
     appendToFeed(entry);
     markFirstSeen(entry.instanceId, drop.detectedAt);
-    maybeNotify(entry, config.notificationThreshold, false);
+    maybeNotify(entry, false);
     if (shouldAutoLock(entry, config)) {
-      void handleAutoLock(entry, config);
+      void handleAutoLock(entry);
     }
   }
 
@@ -360,11 +360,7 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
 // single drop fires at most one toast. instanceId is the notificationId so any
 // later call for the same drop (flap re-detection, or autolock "(locked)"
 // suffix update) replaces rather than stacks.
-function maybeNotify(
-  entry: DropFeedEntry,
-  threshold: NotificationThreshold,
-  locked: boolean,
-): void {
+function maybeNotify(entry: DropFeedEntry, locked: boolean): void {
   let title: string | null = null;
   let message: string | null = null;
 
@@ -384,10 +380,6 @@ function maybeNotify(
     //   2. Must pass the roll-type filter (all-matched / strong-pve / popular)
     //   3. Must pass the tier filter (untiered drops fail closed when the
     //      threshold is anything but 'all' — see passesTierFilter docblock)
-    // The legacy `threshold` parameter is unused for weapons now; armor and
-    // exotic branches are unchanged. weaponGradeMeetsThreshold stays available
-    // for back-compat / debug but no production caller hits it.
-    void threshold;
     const matches = entry.wishlistMatches ?? [];
     if (matches.length === 0) return;
     const filterConfig = loadWeaponFilterConfig();
@@ -504,7 +496,7 @@ function shouldAutoLock(entry: DropFeedEntry, config: ScoringConfig): boolean {
   return entry.armorTier === 4 || entry.armorTier === 5;
 }
 
-async function handleAutoLock(entry: DropFeedEntry, config: ScoringConfig): Promise<void> {
+async function handleAutoLock(entry: DropFeedEntry): Promise<void> {
   // Feed-locked check is the canonical guard — survives SW restarts unlike
   // the in-memory pendingLocks set.
   const current = getFeedEntry(entry.instanceId);
@@ -539,7 +531,7 @@ async function handleAutoLock(entry: DropFeedEntry, config: ScoringConfig): Prom
     // re-notified on cross-cycle retries that eventually land.
     if (isFirstAttempt) {
       const updatedEntry = { ...entry, locked: true };
-      maybeNotify(updatedEntry, config.notificationThreshold, true);
+      maybeNotify(updatedEntry, true);
     }
     return;
   }
@@ -590,6 +582,6 @@ export async function retryPendingAutolocks(): Promise<void> {
   if (candidates.length === 0) return;
   logJson('autolock', 'retrying stuck entries', { count: candidates.length });
   for (const entry of candidates) {
-    await handleAutoLock(entry, config);
+    await handleAutoLock(entry);
   }
 }

@@ -76,7 +76,11 @@ export interface CustomRule {
 
 export type AlertThreshold = 'S' | 'SA' | 'all';
 
-export type NotificationThreshold = 'S' | 'SA' | 'SAB';
+// Brief #12.5: NotificationThreshold removed. WeaponFilterConfig (tier +
+// roll-type, on the Weapons tab) replaced the legacy grade threshold for
+// weapon notifications in Brief #12 Part H; armor and exotic notifications
+// never used a threshold. Field, type, and the maybeNotify `threshold`
+// param all gone.
 
 // Brief #11 Part D: `wishlists: ImportedWishList[]` removed. The matcher now
 // reads from the wishlist cache (src/core/wishlists/cache.ts) directly, so
@@ -86,7 +90,6 @@ export interface ScoringConfig {
   customRules: CustomRule[];
   armorRules: ArmorRule[];
   alertThreshold: AlertThreshold;
-  notificationThreshold: NotificationThreshold;
   autoLockOnArmorMatch: boolean;
   excludeCrafted: boolean;
 }
@@ -113,7 +116,6 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
   customRules: [],
   armorRules: [],
   alertThreshold: 'SA',
-  notificationThreshold: 'S',
   autoLockOnArmorMatch: true,
   excludeCrafted: true,
 };
