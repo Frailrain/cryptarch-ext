@@ -85,6 +85,78 @@ function isStale(sourceId: string): boolean {
   return Date.now() - stat.lastSuccessAt > STALENESS_MS;
 }
 
+export type ValidationResult =
+  | { ok: true; entryCount: number }
+  | { ok: false; error: string };
+
+/**
+ * Pre-flight validation for user-pasted wishlist URLs. Used by the Wishlists
+ * tab when the user clicks "Add" on the custom-source form. Sequential stages
+ * with stage-specific error messages so the UI can give actionable feedback
+ * rather than a generic "fetch failed."
+ *
+ * The "zero entries parsed" error is the most likely failure mode in practice —
+ * users paste the GitHub page URL (https://github.com/.../blob/...) instead of
+ * the raw URL (raw.githubusercontent.com/...). The parser sees an HTML page,
+ * matches no dimwishlist lines, and returns an empty list. Error message
+ * explicitly hints at this.
+ *
+ * Does NOT touch the cache — pure validation. Caller decides whether to add
+ * the source after a successful result.
+ */
+export async function validateWishlistUrl(url: string): Promise<ValidationResult> {
+  if (!url.startsWith('https://')) {
+    return { ok: false, error: 'URL must start with https://' };
+  }
+
+  // Stage 1: HEAD pre-check. Best-effort — some servers reject HEAD with 405,
+  // in which case we let the GET attempt below decide. Network errors during
+  // HEAD also fall through to GET.
+  try {
+    const headResponse = await fetch(url, { method: 'HEAD' });
+    if (headResponse.status !== 405 && !headResponse.ok) {
+      return {
+        ok: false,
+        error: `URL not reachable (HTTP ${headResponse.status})`,
+      };
+    }
+  } catch {
+    // Fall through to GET; that error message is more actionable.
+  }
+
+  // Stage 2: GET + parse.
+  let text: string;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `Could not download wishlist (HTTP ${response.status})`,
+      };
+    }
+    text = await response.text();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `Could not download wishlist: ${msg}` };
+  }
+
+  const parsed = parseWishlist(text, {
+    id: 'validate-tmp',
+    name: 'validate-tmp',
+    sourceUrl: url,
+  });
+  if (parsed.entryCount === 0) {
+    return {
+      ok: false,
+      error:
+        "URL doesn't look like a DIM wishlist. Make sure you're using the raw " +
+        "GitHub URL (starts with raw.githubusercontent.com), not the GitHub page URL.",
+    };
+  }
+
+  return { ok: true, entryCount: parsed.entryCount };
+}
+
 async function performFetch(source: WishlistSource): Promise<RefreshResult> {
   const startedAt = Date.now();
   setFetchPending(source.id);

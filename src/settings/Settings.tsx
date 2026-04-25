@@ -7,6 +7,7 @@ import { send } from '@/shared/messaging';
 import type { DropFeedEntry } from '@/shared/types';
 import { DropLogPanel, type DropTypeFilter, type DropMatchFilter } from './tabs/DropLogPanel';
 import { RulesPanel } from './tabs/RulesPanel';
+import { WishlistsPanel } from './tabs/WishlistsPanel';
 import { SessionExpiredBanner } from './components/SessionExpiredBanner';
 import { ManifestLoadingCard } from './components/ManifestLoadingCard';
 import { AutolockFailedBanner } from './components/AutolockFailedBanner';
@@ -19,7 +20,7 @@ import type {
 import { removeItem } from '@/adapters/storage';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
 
-type Tab = 'drops' | 'rules';
+type Tab = 'drops' | 'rules' | 'wishlists';
 
 export function Settings() {
   const [signedIn, setSignedIn] = useState<boolean>(() => isLoggedIn());
@@ -267,6 +268,9 @@ export function Settings() {
               <TabButton active={tab === 'rules'} onClick={() => setTab('rules')}>
                 Rules
               </TabButton>
+              <TabButton active={tab === 'wishlists'} onClick={() => setTab('wishlists')}>
+                Wishlists
+              </TabButton>
             </nav>
 
             {tab === 'drops' && (
@@ -308,6 +312,8 @@ export function Settings() {
                 onAutoLockToggle={handleAutoLockToggle}
               />
             )}
+
+            {tab === 'wishlists' && <WishlistsPanel />}
           </>
         )}
 

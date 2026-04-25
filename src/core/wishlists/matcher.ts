@@ -1,5 +1,6 @@
 import type { NewItemDrop, WishlistMatch } from '@/shared/types';
 import type { ImportedWishList, WishListEntry } from '@/core/scoring/types';
+import { loadWishlistSources } from '@/core/storage/scoring-config';
 import { getAllCachedLists } from './cache';
 
 /**
@@ -48,7 +49,17 @@ export function matchDropAgainstWishlists(
   drop: NewItemDrop,
   enhancedPerkMap: Map<number, number>,
 ): MatcherResult {
-  const lists = getAllCachedLists();
+  // Filter cached lists by current enabled state. The cache may contain entries
+  // for sources the user has since disabled — keeping the parsed data around
+  // means a re-enable doesn't force an immediate re-fetch (the staleness check
+  // in fetch.ts handles that). But scoring must respect the live enable flag,
+  // so a disabled source's cached entries are excluded here.
+  const enabledIds = new Set(
+    loadWishlistSources()
+      .filter((s) => s.enabled)
+      .map((s) => s.id),
+  );
+  const lists = getAllCachedLists().filter((list) => enabledIds.has(list.id));
   if (lists.length === 0) {
     return { keeperMatches: [], winner: null };
   }
