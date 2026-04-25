@@ -167,46 +167,56 @@ function persistCache(): void {
 // worker wake — which broke the in-page Wishlist matcher test panel and meant
 // up to 30s of stale scoring after any user-initiated config change.
 //
-// Same-context writes are handled idempotently: setFetchSuccess updates the Map
-// then calls persistCache which triggers this listener; the importedAt
-// comparison below makes the re-process a no-op since the Map already holds the
-// just-written list with the same timestamp.
-onKeyChanged<ImportedWishList[]>('wishlists', (newValue) => {
-  // Don't gate on `hydrated`. If the SW wakes for a handler that didn't go
-  // through ensureWishlistCacheReady, this listener serves as the cold-path
-  // initializer too. `hydrated` gets set below so subsequent calls to
-  // hydrateWishlistCache are no-ops.
-  const incoming = new Map<string, ImportedWishList>();
-  if (newValue) {
-    for (const list of newValue) {
-      if (list && typeof list.id === 'string') incoming.set(list.id, list);
+// Brief #12.5 follow-up: gate this listener to SW context only. cache.ts is
+// transitively loaded in the settings page (via WeaponsPanel → fetch.ts →
+// cache.ts) and the popup, but neither context ever uses the in-memory cache
+// Map — only the SW's matcher does. Without this gate, every wishlists-key
+// write (60 MB+ payload from SW background refresh) triggered a pointless
+// 60 MB iteration in the settings page context, freezing the dashboard for
+// 10-20s when the user opened the Weapons tab. SW global lacks `window`.
+//
+// Same-context (SW) writes are handled idempotently: setFetchSuccess updates
+// the Map then calls persistCache which triggers this listener; the
+// importedAt comparison below makes the re-process a no-op since the Map
+// already holds the just-written list with the same timestamp.
+if (typeof window === 'undefined') {
+  onKeyChanged<ImportedWishList[]>('wishlists', (newValue) => {
+    // Don't gate on `hydrated`. If the SW wakes for a handler that didn't go
+    // through ensureWishlistCacheReady, this listener serves as the cold-path
+    // initializer too. `hydrated` gets set below so subsequent calls to
+    // hydrateWishlistCache are no-ops.
+    const incoming = new Map<string, ImportedWishList>();
+    if (newValue) {
+      for (const list of newValue) {
+        if (list && typeof list.id === 'string') incoming.set(list.id, list);
+      }
     }
-  }
-  // Drop entries that disappeared from storage (another context deleted a source).
-  for (const id of Array.from(cache.keys())) {
-    if (!incoming.has(id)) {
-      cache.delete(id);
-      status.delete(id);
+    // Drop entries that disappeared from storage (another context deleted a source).
+    for (const id of Array.from(cache.keys())) {
+      if (!incoming.has(id)) {
+        cache.delete(id);
+        status.delete(id);
+      }
     }
-  }
-  // Add or refresh entries that are new or have a newer importedAt.
-  for (const [id, list] of incoming) {
-    const existing = cache.get(id);
-    if (existing && existing.importedAt === list.importedAt) continue;
-    cache.set(id, list);
-    const prev = status.get(id);
-    // Don't clobber an in-flight 'fetching' state; that context's own
-    // setFetchSuccess will land the final state.
-    if (!prev || prev.state !== 'fetching') {
-      status.set(id, {
-        state: 'ok',
-        lastSuccessAt: list.importedAt,
-        lastAttemptAt: list.importedAt,
-        entryCount: list.entryCount,
-      });
+    // Add or refresh entries that are new or have a newer importedAt.
+    for (const [id, list] of incoming) {
+      const existing = cache.get(id);
+      if (existing && existing.importedAt === list.importedAt) continue;
+      cache.set(id, list);
+      const prev = status.get(id);
+      // Don't clobber an in-flight 'fetching' state; that context's own
+      // setFetchSuccess will land the final state.
+      if (!prev || prev.state !== 'fetching') {
+        status.set(id, {
+          state: 'ok',
+          lastSuccessAt: list.importedAt,
+          lastAttemptAt: list.importedAt,
+          entryCount: list.entryCount,
+        });
+      }
     }
-  }
-  // Mark hydrated so subsequent hydrateWishlistCache calls short-circuit
-  // instead of re-reading from storage redundantly.
-  hydrated = true;
-});
+    // Mark hydrated so subsequent hydrateWishlistCache calls short-circuit
+    // instead of re-reading from storage redundantly.
+    hydrated = true;
+  });
+}
