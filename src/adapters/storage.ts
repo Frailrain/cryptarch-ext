@@ -59,13 +59,28 @@ export function getItem<T>(key: string): T | null {
 export function setItem<T>(key: string, value: T): void {
   const c = assertLoaded();
   c[PREFIX + key] = value;
-  void chrome.storage.local.set({ [PREFIX + key]: value });
+  // Don't swallow rejections. Quota errors (chrome.storage.local default cap is
+  // 10 MB without unlimitedStorage) used to fail silently here — the in-memory
+  // adapter cache held the value, the writing context's UI showed it, but
+  // chrome.storage.local didn't actually persist anything. Other contexts read
+  // empty on boot. Log loudly so any future quota or write failure is visible.
+  chrome.storage.local.set({ [PREFIX + key]: value }).catch((err) => {
+    console.error(
+      `[storage] chrome.storage.local.set failed for ${PREFIX + key}:`,
+      err instanceof Error ? err.message : err,
+    );
+  });
 }
 
 export function removeItem(key: string): void {
   const c = assertLoaded();
   delete c[PREFIX + key];
-  void chrome.storage.local.remove(PREFIX + key);
+  chrome.storage.local.remove(PREFIX + key).catch((err) => {
+    console.error(
+      `[storage] chrome.storage.local.remove failed for ${PREFIX + key}:`,
+      err instanceof Error ? err.message : err,
+    );
+  });
 }
 
 // Live-update hook for consumers (options page) that want to re-render when a

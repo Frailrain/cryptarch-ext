@@ -25,7 +25,13 @@ export default defineManifest({
     service_worker: 'src/background/service-worker.ts',
     type: 'module',
   },
-  permissions: ['storage', 'alarms', 'notifications', 'identity'],
+  // unlimitedStorage is required because parsed wishlists are huge — Voltron
+  // alone is ~30 MB JSON-serialized (247k entries), well past chrome.storage.local's
+  // default 10 MB quota. Without this permission, every saveWishlists call
+  // silently rejects with QUOTA_BYTES, leaving the SW's hydrate step reading
+  // an empty wishlists key on next wake even though the in-memory adapter cache
+  // (in the writing context) showed the data.
+  permissions: ['storage', 'unlimitedStorage', 'alarms', 'notifications', 'identity'],
   host_permissions: [
     'https://www.bungie.net/*',
     'https://raw.githubusercontent.com/*',
