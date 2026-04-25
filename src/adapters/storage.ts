@@ -13,11 +13,16 @@ const PREFIX = 'cryptarch:';
 
 let cache: Record<string, unknown> | null = null;
 let loadPromise: Promise<void> | null = null;
+// When set (via ensureLoadedSubset), the onChanged listener and the cache only
+// track this subset of fully-prefixed keys. Lets the popup avoid pulling the
+// 60 MB+ wishlist payload through onChanged updates it doesn't care about.
+let allowedKeys: Set<string> | null = null;
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (!cache) return;
   for (const [key, change] of Object.entries(changes)) {
+    if (allowedKeys && !allowedKeys.has(key)) continue;
     if (change.newValue === undefined) {
       delete cache[key];
     } else {
@@ -32,6 +37,49 @@ export async function ensureLoaded(): Promise<void> {
   loadPromise = (async () => {
     const all = await chrome.storage.local.get(null);
     cache = all;
+  })();
+  try {
+    await loadPromise;
+  } finally {
+    loadPromise = null;
+  }
+}
+
+/**
+ * Variant of ensureLoaded that only fetches the listed keys. Use from contexts
+ * (like the popup) that know exactly which keys they need and want to skip
+ * paying the cost of loading huge unrelated values — particularly the parsed
+ * wishlists, which can be 60 MB+ combined and otherwise add 5-10 s of cold-load
+ * lag to popup boot.
+ *
+ * Once called, the onChanged listener also restricts itself to these keys, so
+ * subsequent writes to unlisted keys (e.g. the SW rewriting wishlists) don't
+ * push their payloads into this context's cache either.
+ *
+ * Pass keys WITHOUT the 'cryptarch:' prefix; the adapter applies it. Calling
+ * after ensureLoaded() (or after another ensureLoadedSubset) is a no-op.
+ */
+export async function ensureLoadedSubset(keys: string[]): Promise<void> {
+  if (cache) return;
+  if (loadPromise) return loadPromise;
+  const fullKeys = keys.map((k) => PREFIX + k);
+  allowedKeys = new Set(fullKeys);
+  // The chrome.storage.local.get typedef in this @types/chrome version doesn't
+  // surface the string-array overload, but the object form (keys with default
+  // values) is equivalent and properly typed. Using null defaults so missing
+  // keys come back as null rather than the default value being misinterpreted.
+  const requestObj: Record<string, null> = {};
+  for (const k of fullKeys) requestObj[k] = null;
+  loadPromise = (async () => {
+    const result = await chrome.storage.local.get(requestObj);
+    // Strip out the null defaults that chrome.storage returns for absent keys
+    // so getItem('x') returns null (its absent contract) rather than the literal
+    // null value, matching ensureLoaded's full-load behavior.
+    const filtered: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(result ?? {})) {
+      if (v !== null) filtered[k] = v;
+    }
+    cache = filtered;
   })();
   try {
     await loadPromise;

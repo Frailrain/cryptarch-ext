@@ -140,7 +140,7 @@ export async function validateWishlistUrl(url: string): Promise<ValidationResult
     return { ok: false, error: `Could not download wishlist: ${msg}` };
   }
 
-  const parsed = parseWishlist(text, {
+  const parsed = await parseWishlist(text, {
     id: 'validate-tmp',
     name: 'validate-tmp',
     sourceUrl: url,
@@ -166,7 +166,7 @@ async function performFetch(source: WishlistSource): Promise<RefreshResult> {
       throw new Error(`HTTP ${response.status}`);
     }
     const text = await response.text();
-    const list = parseWishlist(text, {
+    const list = await parseWishlist(text, {
       id: source.id,
       name: source.name,
       sourceUrl: source.url,

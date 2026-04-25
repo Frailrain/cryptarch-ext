@@ -3,15 +3,28 @@ import type { ImportedWishList, WishListEntry } from './types';
 
 const ENTRY_REGEX = /^dimwishlist:item=(-?\d+)(?:&perks=([\d,]*))?(?:#notes:(.*))?$/;
 
-export function parseWishlist(
+// Yield to the event loop every N lines while parsing. The Voltron file is
+// ~280k lines; without yielding, the regex loop blocks the JS thread for
+// ~500-1000 ms — visible as UI freeze in the Wishlists tab during refresh.
+// 10k lines per chunk works out to ~25 yields for Voltron, ~100 ms total
+// added overhead, but the UI thread interleaves React updates between chunks.
+const PARSE_YIELD_EVERY = 10_000;
+
+const yieldToEventLoop = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, 0));
+
+export async function parseWishlist(
   source: string,
   meta: { id: string; name: string; sourceUrl: string | null },
-): ImportedWishList {
+): Promise<ImportedWishList> {
   const stripped = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
   const lines = stripped.split(/\r?\n/);
 
   const entries: WishListEntry[] = [];
   for (let i = 0; i < lines.length; i++) {
+    if (i > 0 && i % PARSE_YIELD_EVERY === 0) {
+      await yieldToEventLoop();
+    }
     const line = lines[i].trim();
     if (!line) continue;
     if (!line.startsWith('dimwishlist:')) continue;
