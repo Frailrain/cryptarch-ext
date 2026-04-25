@@ -17,6 +17,11 @@ export interface InventoryPollStatus {
   itemsKnown: number;
 }
 
+// Per-weapon tier letter parsed from Aegis-style note blocks
+// (e.g. "//notes:Aegis Endgame S Tier..."). S is best, F is worst.
+// Brief #12 introduces this; per-weapon, not per-roll.
+export type TierLetter = 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
+
 // One curated or user-added wishlist source. Stored in chrome.storage under
 // the wishlistSources key. The parsed entries live separately as
 // ImportedWishList[] keyed by source id.

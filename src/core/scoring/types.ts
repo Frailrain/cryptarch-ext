@@ -41,7 +41,7 @@ export interface ArmorRoll {
 import type { ArmorRule } from '@/core/rules/armor-rules';
 export type { ArmorRule };
 
-import type { WishlistMatch } from '@/shared/types';
+import type { TierLetter, WishlistMatch } from '@/shared/types';
 
 export interface WishListEntry {
   sourceListId: string;
@@ -49,6 +49,10 @@ export interface WishListEntry {
   requiredPerks: number[];
   isTrash: boolean;
   notes: string;
+  // Brief #12: per-weapon tier extracted from preceding //notes: blocks in
+  // Aegis-style sources. Absent on entries from sources that don't carry
+  // tier info (Voltron's older entries, custom URLs, etc.).
+  weaponTier?: TierLetter;
 }
 
 export interface ImportedWishList {
