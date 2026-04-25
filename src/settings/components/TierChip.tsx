@@ -44,6 +44,7 @@ export function TierChip({
   onClick,
   title,
   compact = false,
+  disabled = false,
 }: {
   tier: TierLetter;
   active?: boolean;
@@ -54,6 +55,10 @@ export function TierChip({
   // right-side chip slot. Default false renders "Tier X" as a small
   // inline tag suitable for explanatory contexts.
   compact?: boolean;
+  // When true, the chip renders dimmed + non-clickable. Used by the Drop
+  // Log filter row to keep Tier visible (no layout shift) while the type
+  // filter is set to Armor.
+  disabled?: boolean;
 }) {
   const colors = TIER_COLORS[tier];
   const cls = active ? colors.active : colors.inactive;
@@ -63,9 +68,10 @@ export function TierChip({
     return (
       <button
         type="button"
-        onClick={onClick}
+        onClick={disabled ? undefined : onClick}
+        disabled={disabled}
         title={title}
-        className={`${baseCls} ${cls}`}
+        className={`${baseCls} ${cls} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
       >
         {tier}
       </button>

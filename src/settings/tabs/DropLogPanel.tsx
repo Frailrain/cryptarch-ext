@@ -137,20 +137,23 @@ export function DropLogPanel(props: DropLogPanelProps) {
             value={typeFilter}
             onChange={(v) => props.onTypeFilterChange(v as DropTypeFilter)}
           />
-          {weaponFilterRelevant && (
-            <div className="flex items-center gap-1">
-              <span className="text-text-muted mr-1">Tier</span>
-              {TIER_FILTER_ORDER.map((tier) => (
-                <TierChip
-                  key={tier}
-                  tier={tier}
-                  active={visibleTiers.has(tier)}
-                  onClick={() => props.onToggleTier(tier)}
-                  title={`Tier ${tier}`}
-                />
-              ))}
-            </div>
-          )}
+          {/* Tier and Match always render — disabled when type filter excludes
+              their domain. Avoids layout shift as the user changes Type. */}
+          <div
+            className={`flex items-center gap-1 ${weaponFilterRelevant ? '' : 'opacity-40'}`}
+          >
+            <span className="text-text-muted mr-1">Tier</span>
+            {TIER_FILTER_ORDER.map((tier) => (
+              <TierChip
+                key={tier}
+                tier={tier}
+                active={visibleTiers.has(tier)}
+                onClick={() => props.onToggleTier(tier)}
+                title={`Tier ${tier}`}
+                disabled={!weaponFilterRelevant}
+              />
+            ))}
+          </div>
           <button
             onClick={props.onToggleExotic}
             className={`px-2 py-1 rounded border text-xs ${
@@ -161,18 +164,17 @@ export function DropLogPanel(props: DropLogPanelProps) {
           >
             Exotic
           </button>
-          {matchFilterRelevant && (
-            <FilterGroup
-              label="Match"
-              options={[
-                { value: 'all', label: 'All' },
-                { value: 'matched', label: 'Matched' },
-                { value: 'not-matched', label: 'No match' },
-              ]}
-              value={matchFilter}
-              onChange={(v) => props.onMatchFilterChange(v as DropMatchFilter)}
-            />
-          )}
+          <FilterGroup
+            label="Match"
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'matched', label: 'Matched' },
+              { value: 'not-matched', label: 'No match' },
+            ]}
+            value={matchFilter}
+            onChange={(v) => props.onMatchFilterChange(v as DropMatchFilter)}
+            disabled={!matchFilterRelevant}
+          />
         </div>
       </div>
 
@@ -203,21 +205,23 @@ function FilterGroup<T extends string>(props: {
   options: Array<{ value: T; label: string }>;
   value: T;
   onChange: (v: T) => void;
+  disabled?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-1">
+    <div className={`flex items-center gap-1 ${props.disabled ? 'opacity-40' : ''}`}>
       <span className="text-text-muted mr-1">{props.label}</span>
       {props.options.map((opt) => {
         const active = props.value === opt.value;
         return (
           <button
             key={opt.value}
-            onClick={() => props.onChange(opt.value)}
+            onClick={props.disabled ? undefined : () => props.onChange(opt.value)}
+            disabled={props.disabled}
             className={`px-2 py-1 rounded border ${
               active
                 ? 'bg-rahool-blue/20 text-rahool-blue border-rahool-blue/40'
                 : 'bg-bg-primary text-text-muted border-bg-border hover:text-text-primary'
-            }`}
+            } ${props.disabled ? 'cursor-not-allowed' : ''}`}
           >
             {opt.label}
           </button>
