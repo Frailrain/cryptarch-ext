@@ -24,14 +24,43 @@ const POPUP_STORAGE_KEYS = [
   'weaponFilterConfig',
 ];
 
+// Brief #12.5 Part D — popup boot timing instrumentation. Matt reported every
+// extension reload triggers ~10 s lag on the next popup open. We don't have a
+// confirmed root cause yet (suspected: chrome.storage.local cold-init in popup
+// context, or React 18 first-render cost). These markers print to the popup
+// devtools console (right-click popup → Inspect → Console) so we can pinpoint
+// which phase is actually slow before optimizing. Cheap to leave in; remove
+// once we have the data and a fix lands.
+const T_MODULE_LOAD = performance.now();
+
 async function bootstrap() {
+  const tBootstrapStart = performance.now();
+  console.log(
+    `[popup-perf] module-load → bootstrap-start: ${(tBootstrapStart - T_MODULE_LOAD).toFixed(1)}ms`,
+  );
+
+  const tBeforeStorage = performance.now();
   await ensureLoadedSubset(POPUP_STORAGE_KEYS);
+  const tAfterStorage = performance.now();
+  console.log(
+    `[popup-perf] ensureLoadedSubset(${POPUP_STORAGE_KEYS.length} keys): ${(tAfterStorage - tBeforeStorage).toFixed(1)}ms`,
+  );
+
   const container = document.getElementById('root');
   if (!container) throw new Error('Root element missing');
+
+  const tBeforeRender = performance.now();
   createRoot(container).render(
     <React.StrictMode>
       <Popup />
     </React.StrictMode>,
+  );
+  const tAfterRender = performance.now();
+  console.log(
+    `[popup-perf] createRoot.render: ${(tAfterRender - tBeforeRender).toFixed(1)}ms`,
+  );
+  console.log(
+    `[popup-perf] total (module-load → first-render): ${(tAfterRender - T_MODULE_LOAD).toFixed(1)}ms`,
   );
 }
 

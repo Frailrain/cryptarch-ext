@@ -2,13 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { loadFeed } from '@/core/storage/drop-feed';
 import { isLoggedIn } from '@/core/bungie/auth';
 import { loadAuthState, loadPrimaryMembership, type AuthState } from '@/core/storage/tokens';
-import { getItem, onKeyChanged } from '@/adapters/storage';
+import { getItem, onKeyChanged, removeItem, setItem } from '@/adapters/storage';
 import { send } from '@/shared/messaging';
 import type { DropFeedEntry } from '@/shared/types';
 import { DropLogPanel, type DropTypeFilter, type DropMatchFilter } from './tabs/DropLogPanel';
 import { RulesPanel } from './tabs/RulesPanel';
 import { WeaponsPanel } from './tabs/WeaponsPanel';
-import { WishlistTestPanel } from './components/WishlistTestPanel';
+// Brief #12.5: WishlistTestPanel hidden for clan distribution. Re-enable the
+// import + render in the Drops tab section when iterating on matcher behavior.
+// import { WishlistTestPanel } from './components/WishlistTestPanel';
 import { SessionExpiredBanner } from './components/SessionExpiredBanner';
 import { ManifestLoadingCard } from './components/ManifestLoadingCard';
 import { AutolockFailedBanner } from './components/AutolockFailedBanner';
@@ -19,7 +21,6 @@ import type {
   PendingNavigation,
   TierLetter,
 } from '@/shared/types';
-import { removeItem } from '@/adapters/storage';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
 
 // Brief #12: tab labels reorganized to put weapon configuration on equal
@@ -313,7 +314,13 @@ export function Settings() {
                   </button>
                 </div>
 
-                <WishlistTestPanel />
+                {/* Brief #12.5: dev test buttons (multi-source / fallback /
+                    armor) hidden for clan distribution. Re-enable by
+                    uncommenting when iterating on matcher behavior. The
+                    component file stays in place — see
+                    src/settings/components/WishlistTestPanel.tsx and the
+                    SW message handlers in service-worker.ts. */}
+                {/* <WishlistTestPanel /> */}
 
                 <DropLogPanel
                   feed={feed}
@@ -334,6 +341,13 @@ export function Settings() {
                       return next;
                     })
                   }
+                  onClearFeed={() => {
+                    setItem('drop-feed', []);
+                    setFeed([]);
+                  }}
+                  onLockDrop={(instanceId) => {
+                    void send({ type: 'lock-drop', payload: { instanceId } });
+                  }}
                 />
               </>
             )}

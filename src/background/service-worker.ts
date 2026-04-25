@@ -28,7 +28,8 @@ import {
   testMatch,
 } from './debug-wishlists';
 import { getEnhancedPerkMap, getManifest, lookupItem } from '@/core/bungie/manifest';
-import { appendToFeed } from '@/core/storage/drop-feed';
+import { appendToFeed, getFeedEntry, updateFeedLock } from '@/core/storage/drop-feed';
+import { setLockState } from '@/core/bungie/api';
 import { ItemType } from '@/shared/types';
 import type { DropFeedEntry, TierLetter, WishlistMatch } from '@/shared/types';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
@@ -107,6 +108,56 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
       if (msg.type === 'retry-manifest') {
         void handleRetryManifest();
         sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === 'lock-drop') {
+        // User-initiated manual lock from the Drop Log row's lock icon.
+        // Reuses the same SetLockState API the autolock path uses; differs
+        // only in that we don't run through attemptAutoLock's retry/backoff
+        // (a manual click is a one-shot — the user can click again if they
+        // want to retry).
+        const payload = msg.payload as { instanceId?: string } | undefined;
+        const instanceId = payload?.instanceId;
+        if (!instanceId) {
+          sendResponse({ ok: false, error: 'Missing instanceId' });
+          return;
+        }
+        const entry = getFeedEntry(instanceId);
+        if (!entry) {
+          sendResponse({ ok: false, error: 'Drop not found in feed' });
+          return;
+        }
+        if (entry.locked) {
+          sendResponse({ ok: true });
+          return;
+        }
+        if (!entry.characterId) {
+          sendResponse({
+            ok: false,
+            error: 'Drop has no characterId — cannot manually lock',
+          });
+          return;
+        }
+        const primary = loadPrimaryMembership();
+        if (!primary) {
+          sendResponse({ ok: false, error: 'Not signed in' });
+          return;
+        }
+        try {
+          await setLockState(
+            primary.membershipType,
+            entry.characterId,
+            entry.instanceId,
+            true,
+          );
+          updateFeedLock(entry.instanceId, true);
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         return;
       }
       if (msg.type === 'get-armor-taxonomy') {

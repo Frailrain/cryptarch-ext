@@ -13,7 +13,8 @@ export type MessageType =
   | 'trigger-poll-now'
   | 'wishlist-test-multi-source'
   | 'wishlist-test-fallback'
-  | 'wishlist-test-armor';
+  | 'wishlist-test-armor'
+  | 'lock-drop';
 
 export interface Message<T = unknown> {
   type: MessageType;

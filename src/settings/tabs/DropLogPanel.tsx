@@ -45,17 +45,49 @@ function MatchChip({ matched }: { matched: boolean }) {
   );
 }
 
-function LockIcon({ locked, shouldShow }: { locked: boolean; shouldShow: boolean }) {
+function LockIcon({
+  locked,
+  shouldShow,
+  onLock,
+}: {
+  locked: boolean;
+  shouldShow: boolean;
+  // When provided and the drop isn't already locked, the unlocked icon
+  // becomes a clickable button that triggers a manual lock via the SW.
+  // Omit (or pass undefined) for entries that can't be manually locked
+  // — test drops, ghost entries, anything missing characterId.
+  onLock?: () => void;
+}) {
   if (!shouldShow) {
     return <span className="w-4 h-4 inline-block" aria-hidden="true" />;
   }
+  if (locked) {
+    return (
+      <span className="text-rahool-yellow" title="Locked" aria-label="locked">
+        🔒
+      </span>
+    );
+  }
+  if (onLock) {
+    return (
+      <button
+        type="button"
+        onClick={onLock}
+        title="Click to lock this drop"
+        aria-label="lock this drop"
+        className="text-text-muted/60 hover:text-rahool-yellow cursor-pointer"
+      >
+        ○
+      </button>
+    );
+  }
   return (
     <span
-      className={locked ? 'text-rahool-yellow' : 'text-text-muted/60'}
-      title={locked ? 'Auto-locked' : 'Lock pending or failed'}
-      aria-label={locked ? 'locked' : 'not locked'}
+      className="text-text-muted/60"
+      title="Lock pending or failed"
+      aria-label="not locked"
     >
-      {locked ? '🔒' : '○'}
+      ○
     </span>
   );
 }
@@ -84,6 +116,8 @@ interface DropLogPanelProps {
   onMatchFilterChange: (v: DropMatchFilter) => void;
   onToggleExotic: () => void;
   onToggleTier: (tier: TierLetter) => void;
+  onClearFeed: () => void;
+  onLockDrop: (instanceId: string) => void;
 }
 
 export function DropLogPanel(props: DropLogPanelProps) {
@@ -125,7 +159,26 @@ export function DropLogPanel(props: DropLogPanelProps) {
   return (
     <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <h2 className="text-base font-medium text-text-primary">Drop Log</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-base font-medium text-text-primary">Drop Log</h2>
+          <button
+            onClick={() => {
+              if (feed.length === 0) return;
+              if (
+                window.confirm(
+                  `Clear all ${feed.length} drop${feed.length === 1 ? '' : 's'} from the log? This cannot be undone.`,
+                )
+              ) {
+                props.onClearFeed();
+              }
+            }}
+            disabled={feed.length === 0}
+            title={feed.length === 0 ? 'Log is empty' : 'Clear all drops'}
+            className="text-xs px-2 py-1 rounded border border-bg-border text-text-muted hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Clear log
+          </button>
+        </div>
         <div className="flex items-center gap-3 text-xs flex-wrap">
           <FilterGroup
             label="Type"
@@ -192,6 +245,7 @@ export function DropLogPanel(props: DropLogPanelProps) {
               entry={entry}
               nowTick={nowTick}
               highlighted={entry.instanceId === highlightInstanceId}
+              onLockDrop={props.onLockDrop}
             />
           ))}
         </ul>
@@ -235,10 +289,12 @@ function DropLogRow({
   entry,
   nowTick,
   highlighted,
+  onLockDrop,
 }: {
   entry: DropFeedEntry;
   nowTick: number;
   highlighted: boolean;
+  onLockDrop: (instanceId: string) => void;
 }) {
   const isArmor = entry.itemType === 'armor';
   const isMatchedArmor = isArmor && entry.armorMatched === true;
@@ -325,7 +381,19 @@ function DropLogRow({
       ) : (
         <span className="w-6 h-6 inline-block" aria-hidden="true" />
       )}
-      <LockIcon locked={entry.locked} shouldShow={lockRelevant && !entry.deleted} />
+      <LockIcon
+        locked={entry.locked}
+        shouldShow={lockRelevant && !entry.deleted}
+        // Manual-lock click handler is provided only when the entry is
+        // lockable: real drop with a characterId (test drops and ghost
+        // entries lack one), not deleted. Already-locked drops show 🔒
+        // and don't render the button branch.
+        onLock={
+          entry.characterId && !entry.deleted
+            ? () => onLockDrop(entry.instanceId)
+            : undefined
+        }
+      />
       <div className="text-xs text-text-muted w-20 text-right">
         {entry.deleted
           ? `Dismantled ${formatRelativeTimestamp(nowTick - entry.timestamp)}`
