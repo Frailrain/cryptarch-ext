@@ -227,3 +227,8 @@ const debugApi = {
 export function installWishlistDebug(): void {
   (globalThis as unknown as { cryptarchDebug: typeof debugApi }).cryptarchDebug = debugApi;
 }
+
+// Re-exported for the SW message handlers that back the in-UI test panel.
+// Same surface as the console helpers — the panel just calls them via
+// chrome.runtime.sendMessage instead of typing into devtools.
+export { findMultiSourceItems, testMatch, testFallback };

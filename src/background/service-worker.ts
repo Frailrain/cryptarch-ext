@@ -20,7 +20,13 @@ import {
   kickoffManifestLoad,
 } from './controller';
 import type { Message } from '@/shared/messaging';
-import { installWishlistDebug } from './debug-wishlists';
+import {
+  findMultiSourceItems,
+  installWishlistDebug,
+  testFallback,
+  testMatch,
+} from './debug-wishlists';
+import { lookupItem } from '@/core/bungie/manifest';
 
 async function ensurePollAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(POLL_ALARM_NAME);
@@ -95,6 +101,57 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
       if (msg.type === 'get-armor-taxonomy') {
         const taxonomy = await handleGetArmorTaxonomy();
         sendResponse({ ok: true, payload: taxonomy });
+        return;
+      }
+      if (msg.type === 'wishlist-test-multi-source') {
+        // Find a hash flagged by 2+ enabled sources, then run it through the
+        // matcher. Empty result is a real, expected outcome — surface it
+        // explicitly so the UI can guide the user.
+        const candidates = findMultiSourceItems(2, 1);
+        if (candidates.length === 0) {
+          sendResponse({
+            ok: true,
+            payload: {
+              ok: false,
+              message:
+                'No items found matching 2+ enabled sources. Enable additional wishlists in the Wishlists tab to test multi-source matching.',
+            },
+          });
+          return;
+        }
+        const candidate = candidates[0];
+        const outcome = await testMatch(candidate.itemHash, candidate.samplePerks);
+        let itemName: string | null = null;
+        try {
+          const def = await lookupItem(candidate.itemHash);
+          itemName = def?.displayProperties?.name ?? null;
+        } catch {
+          // Manifest not ready or hash absent — UI falls back to hash.
+        }
+        sendResponse({
+          ok: true,
+          payload: {
+            ok: true,
+            itemHash: candidate.itemHash,
+            itemName,
+            grade: outcome.grade,
+            wishlistMatches: outcome.wishlistMatches,
+            reasons: outcome.reasons,
+            perks: candidate.samplePerks,
+          },
+        });
+        return;
+      }
+      if (msg.type === 'wishlist-test-fallback') {
+        const outcome = await testFallback();
+        sendResponse({
+          ok: true,
+          payload: {
+            grade: outcome.grade,
+            wishlistMatches: outcome.wishlistMatches,
+            reasons: outcome.reasons,
+          },
+        });
         return;
       }
       sendResponse({ ok: false, error: `unknown message ${msg.type}` });

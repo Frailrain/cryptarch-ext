@@ -10,7 +10,9 @@ export type MessageType =
   | 'force-rebaseline'
   | 'get-armor-taxonomy'
   | 'retry-manifest'
-  | 'trigger-poll-now';
+  | 'trigger-poll-now'
+  | 'wishlist-test-multi-source'
+  | 'wishlist-test-fallback';
 
 export interface Message<T = unknown> {
   type: MessageType;

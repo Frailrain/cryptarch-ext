@@ -8,6 +8,7 @@ import type { DropFeedEntry } from '@/shared/types';
 import { DropLogPanel, type DropTypeFilter, type DropMatchFilter } from './tabs/DropLogPanel';
 import { RulesPanel } from './tabs/RulesPanel';
 import { WishlistsPanel } from './tabs/WishlistsPanel';
+import { WishlistTestPanel } from './components/WishlistTestPanel';
 import { SessionExpiredBanner } from './components/SessionExpiredBanner';
 import { ManifestLoadingCard } from './components/ManifestLoadingCard';
 import { AutolockFailedBanner } from './components/AutolockFailedBanner';
@@ -286,6 +287,8 @@ export function Settings() {
                     Poll now
                   </button>
                 </div>
+
+                <WishlistTestPanel />
 
                 <DropLogPanel
                   feed={feed}
