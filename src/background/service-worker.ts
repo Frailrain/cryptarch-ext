@@ -32,13 +32,32 @@ import { appendToFeed, getFeedEntry, updateFeedLock } from '@/core/storage/drop-
 import { setLockState } from '@/core/bungie/api';
 import { ItemType } from '@/shared/types';
 import type { DropFeedEntry, TierLetter, WishlistMatch } from '@/shared/types';
-import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
+import {
+  ensureWishlistCacheReady,
+  hydrateWishlistCacheForWorker,
+  removeFromCache,
+} from '@/core/wishlists/cache';
 import { resolveBestTier } from '@/core/wishlists/matcher';
+import {
+  refreshOne,
+  refreshWishlists,
+  validateWishlistUrl,
+} from '@/core/wishlists/fetch';
 import { runPollCycle } from '@/core/bungie/inventory';
 import { loadPrimaryMembership } from '@/core/storage/tokens';
 import { loadArmorRules } from '@/core/rules/armor-rules';
-import { loadScoringConfig } from '@/core/storage/scoring-config';
+import {
+  loadScoringConfig,
+  loadWishlistSources,
+} from '@/core/storage/scoring-config';
 import { scoreItem } from '@/core/scoring/engine';
+
+// In-flight guards for wishlist refresh messages. SW is the single owner of
+// refresh; if multiple clicks arrive (or refreshAll + refreshOne overlap on
+// the same source), they share the same Promise so callers resolve together
+// rather than triggering parallel fetches.
+let refreshAllInFlight: Promise<unknown> | null = null;
+const refreshOneInFlight = new Map<string, Promise<unknown>>();
 
 async function ensurePollAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(POLL_ALARM_NAME);
@@ -107,6 +126,89 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
       }
       if (msg.type === 'retry-manifest') {
         void handleRetryManifest();
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === 'wishlists:refreshAll') {
+        // In-flight guard: a second click while refresh is running awaits
+        // the SAME promise so both callers resolve together. SW is the only
+        // refresh owner — settings/popup never run the fetch chain.
+        const force = Boolean((msg.payload as { force?: boolean } | undefined)?.force);
+        await hydrateWishlistCacheForWorker();
+        if (!refreshAllInFlight) {
+          refreshAllInFlight = refreshWishlists(loadWishlistSources(), { force });
+          void refreshAllInFlight.finally(() => {
+            refreshAllInFlight = null;
+          });
+        }
+        try {
+          const results = await refreshAllInFlight;
+          sendResponse({ ok: true, payload: { results } });
+        } catch (err) {
+          sendResponse({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+      if (msg.type === 'wishlists:refreshOne') {
+        const sourceId = (msg.payload as { sourceId?: string } | undefined)?.sourceId;
+        const force = Boolean((msg.payload as { force?: boolean } | undefined)?.force);
+        if (!sourceId) {
+          sendResponse({ ok: false, error: 'Missing sourceId' });
+          return;
+        }
+        const source = loadWishlistSources().find((s) => s.id === sourceId);
+        if (!source) {
+          sendResponse({ ok: false, error: `Unknown sourceId: ${sourceId}` });
+          return;
+        }
+        await hydrateWishlistCacheForWorker();
+        let inFlight = refreshOneInFlight.get(sourceId);
+        if (!inFlight) {
+          inFlight = refreshOne(source, { force });
+          refreshOneInFlight.set(sourceId, inFlight);
+          void inFlight.finally(() => {
+            refreshOneInFlight.delete(sourceId);
+          });
+        }
+        try {
+          const result = await inFlight;
+          sendResponse({ ok: true, payload: { result } });
+        } catch (err) {
+          sendResponse({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+      if (msg.type === 'wishlists:validateUrl') {
+        const url = (msg.payload as { url?: string } | undefined)?.url;
+        if (!url) {
+          sendResponse({ ok: false, error: 'Missing url' });
+          return;
+        }
+        try {
+          const result = await validateWishlistUrl(url);
+          sendResponse({ ok: true, payload: result });
+        } catch (err) {
+          sendResponse({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+      if (msg.type === 'wishlists:dropSource') {
+        const sourceId = (msg.payload as { sourceId?: string } | undefined)?.sourceId;
+        if (!sourceId) {
+          sendResponse({ ok: false, error: 'Missing sourceId' });
+          return;
+        }
+        await hydrateWishlistCacheForWorker();
+        removeFromCache(sourceId);
         sendResponse({ ok: true });
         return;
       }

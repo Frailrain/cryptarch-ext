@@ -63,24 +63,22 @@ export function saveWishlists(lists: ImportedWishList[]): void {
 }
 
 // Brief #12.5 Part D: settings page reads this instead of loadWishlists.
-// One-time migration: if the wishlistMetadata key isn't present (existing
-// users upgrading), derive it from the full wishlists payload and persist.
-// This costs the upgrade user one slow read on the first call; future calls
-// are instant.
+// Pure read — no migration fallback. The previous version fell back to
+// loadWishlists() to derive metadata when the key was missing, but that
+// re-introduced the very 60 MB read we're trying to avoid in page contexts.
+// SW now derives metadata on its own hydrate (cache.ts syncMetadataFromCache),
+// so by the time any dashboard reads, metadata is populated.
 export function loadWishlistMetadata(): WishlistMetadata[] {
-  const stored = getItem<WishlistMetadata[]>(WISHLIST_METADATA_KEY);
-  if (stored) return stored;
-  const fullLists = loadWishlists();
-  if (fullLists.length === 0) return [];
-  const derived: WishlistMetadata[] = fullLists.map((l) => ({
-    id: l.id,
-    name: l.name,
-    sourceUrl: l.sourceUrl,
-    entryCount: l.entryCount,
-    importedAt: l.importedAt,
-  }));
-  setItem<WishlistMetadata[]>(WISHLIST_METADATA_KEY, derived);
-  return derived;
+  return getItem<WishlistMetadata[]>(WISHLIST_METADATA_KEY) ?? [];
+}
+
+// Direct metadata write. Called by the SW's syncMetadataFromCache when it
+// detects metadata is stale relative to the full wishlists cache. saveWishlists
+// also writes metadata (as a derived view of what it's persisting), so most
+// updates flow through there; this exists for the SW-side derive path that
+// shouldn't re-write the heavy wishlists key.
+export function saveWishlistMetadata(meta: WishlistMetadata[]): void {
+  setItem<WishlistMetadata[]>(WISHLIST_METADATA_KEY, meta);
 }
 
 // Lazy default: if nothing is stored, return a fresh copy of the builtins

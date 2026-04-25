@@ -14,7 +14,13 @@ export type MessageType =
   | 'wishlist-test-multi-source'
   | 'wishlist-test-fallback'
   | 'wishlist-test-armor'
-  | 'lock-drop';
+  | 'lock-drop'
+  // Brief #12.5 Part D: dashboard delegates all wishlist mutations to the SW.
+  // Settings page is a viewer; the SW owns fetching/parsing/persisting.
+  | 'wishlists:refreshAll'
+  | 'wishlists:refreshOne'
+  | 'wishlists:validateUrl'
+  | 'wishlists:dropSource';
 
 export interface Message<T = unknown> {
   type: MessageType;

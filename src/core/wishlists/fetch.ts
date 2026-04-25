@@ -1,6 +1,8 @@
 import type { WishlistSource } from '@/shared/types';
 import { parseWishlist } from '@/core/scoring/wishlist-parser';
 import {
+  beginPersistBatch,
+  endPersistBatch,
   getCachedList,
   getFetchStatus,
   setFetchError,
@@ -52,9 +54,18 @@ export async function refreshWishlists(
   sources: WishlistSource[],
   opts: RefreshOptions = {},
 ): Promise<RefreshResult[]> {
-  const enabled = sources.filter((s) => s.enabled);
-  const promises = enabled.map((source) => refreshOne(source, opts));
-  return Promise.all(promises);
+  // Brief #12.5 Part D: batch the per-source persist writes. Without this, a
+  // 4-source refresh would write the full ~60 MB wishlists array 4 times
+  // (each progressively larger). With the batch, setFetchSuccess updates
+  // the in-memory cache N times and persistCache fires once at the end.
+  beginPersistBatch();
+  try {
+    const enabled = sources.filter((s) => s.enabled);
+    const promises = enabled.map((source) => refreshOne(source, opts));
+    return await Promise.all(promises);
+  } finally {
+    endPersistBatch();
+  }
 }
 
 /**
