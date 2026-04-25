@@ -43,17 +43,23 @@ export function TierChip({
   active = true,
   onClick,
   title,
+  compact = false,
 }: {
   tier: TierLetter;
   active?: boolean;
   onClick?: () => void;
   title?: string;
+  // When true, renders just the letter sized to match the existing
+  // GradeChip (w-6 h-6, larger text). Use in the Drop Log / Popup
+  // right-side chip slot. Default false renders "Tier X" as a small
+  // inline tag suitable for explanatory contexts.
+  compact?: boolean;
 }) {
   const colors = TIER_COLORS[tier];
   const cls = active ? colors.active : colors.inactive;
-  const baseCls =
-    'text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border whitespace-nowrap';
   if (onClick) {
+    const baseCls =
+      'text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border whitespace-nowrap';
     return (
       <button
         type="button"
@@ -65,6 +71,18 @@ export function TierChip({
       </button>
     );
   }
+  if (compact) {
+    return (
+      <span
+        title={title ?? `Tier ${tier}`}
+        className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-semibold border ${cls}`}
+      >
+        {tier}
+      </span>
+    );
+  }
+  const baseCls =
+    'text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border whitespace-nowrap';
   return (
     <span title={title} className={`${baseCls} ${cls}`}>
       Tier {tier}

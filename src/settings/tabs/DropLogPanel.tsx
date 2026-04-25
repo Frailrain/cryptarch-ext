@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import type { DropFeedEntry, TierLetter } from '@/shared/types';
-import type { Grade } from '@/core/scoring/types';
 import { TierChip } from '../components/TierChip';
 
 const TIER_FILTER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
@@ -8,26 +7,11 @@ const TIER_FILTER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
 export type DropTypeFilter = 'all' | 'weapon' | 'armor';
 export type DropMatchFilter = 'all' | 'matched' | 'not-matched';
 
-// Rahool-inspired grade palette. S/matched = Legendary purple (#7C4DFF),
-// A = Rahool blue, B = muted gray (de-emphasized), exotic = #CEAE33.
-const GRADE_CHIP_CLS: Record<Grade, string> = {
-  S: 'bg-grade-s/20 text-grade-s border-grade-s/50',
-  A: 'bg-grade-a/20 text-grade-a border-grade-a/50',
-  B: 'bg-grade-b/20 text-grade-b border-grade-b/50',
-  C: 'bg-grade-b/10 text-grade-b border-grade-b/30',
-  D: 'bg-red-500/20 text-red-300 border-red-500/40',
-  F: 'bg-red-700/30 text-red-200 border-red-700/50',
-};
-
-function GradeChip({ grade }: { grade: Grade }) {
-  return (
-    <span
-      className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-semibold border ${GRADE_CHIP_CLS[grade]}`}
-    >
-      {grade}
-    </span>
-  );
-}
+// Brief #12 follow-up: GradeChip removed from row rendering. The grade field
+// stays on DropFeedEntry until Part H rewires notifications to use
+// WeaponFilterConfig instead of the legacy grade threshold; we just stopped
+// surfacing it in the Drop Log because the user-visible distinction between
+// per-roll grade and per-weapon tier was muddled.
 
 function ExoticChip() {
   return (
@@ -88,8 +72,6 @@ interface DropLogPanelProps {
   feed: DropFeedEntry[];
   typeFilter: DropTypeFilter;
   matchFilter: DropMatchFilter;
-  showA: boolean;
-  showB: boolean;
   showExotic: boolean;
   // Brief #12: tier visibility set. Untiered drops are unaffected (always
   // shown) — only drops with weaponTier metadata are subject to this filter.
@@ -100,8 +82,6 @@ interface DropLogPanelProps {
   highlightInstanceId?: string | null;
   onTypeFilterChange: (v: DropTypeFilter) => void;
   onMatchFilterChange: (v: DropMatchFilter) => void;
-  onToggleA: () => void;
-  onToggleB: () => void;
   onToggleExotic: () => void;
   onToggleTier: (tier: TierLetter) => void;
 }
@@ -111,8 +91,6 @@ export function DropLogPanel(props: DropLogPanelProps) {
     feed,
     typeFilter,
     matchFilter,
-    showA,
-    showB,
     showExotic,
     visibleTiers,
     nowTick,
@@ -137,19 +115,11 @@ export function DropLogPanel(props: DropLogPanelProps) {
       if (typeFilter !== 'all' && e.itemType !== typeFilter) return false;
       if (e.isExotic) return showExotic;
       if (e.itemType === 'weapon') {
-        if (e.grade === 'S') {
-          // S-grade always passes the grade gate; tier filter still applies
-          // below when the drop has tier metadata.
-        } else if (e.grade === 'A') {
-          if (!showA) return false;
-        } else if (e.grade === 'B') {
-          if (!showB) return false;
-        } else {
-          return false;
-        }
-        // Brief #12 tier filter: only applies to drops that carry tier data.
-        // Untiered drops (Voltron-only matches without Aegis tier references,
-        // pre-#12 entries) are unaffected.
+        // Brief #12 follow-up: grade chips removed from the UI; the underlying
+        // grade field still drives notification thresholds (until Part H rewires
+        // them to WeaponFilterConfig). Drop Log no longer hides drops by grade.
+        // Tier filter still applies when the drop has tier metadata; untiered
+        // drops always pass.
         if (e.weaponTier && !visibleTiers.has(e.weaponTier)) return false;
         return true;
       }
@@ -157,7 +127,7 @@ export function DropLogPanel(props: DropLogPanelProps) {
       if (matchFilter === 'not-matched' && e.armorMatched !== false) return false;
       return true;
     });
-  }, [feed, typeFilter, matchFilter, showA, showB, showExotic, visibleTiers]);
+  }, [feed, typeFilter, matchFilter, showExotic, visibleTiers]);
 
   return (
     <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-4">
@@ -174,50 +144,6 @@ export function DropLogPanel(props: DropLogPanelProps) {
             value={typeFilter}
             onChange={(v) => props.onTypeFilterChange(v as DropTypeFilter)}
           />
-          <div className="flex items-center gap-1">
-            <span className="text-text-muted mr-1">Grade</span>
-            {weaponFilterRelevant && (
-              <>
-                <button
-                  className="px-2 py-1 rounded bg-grade-s/20 text-grade-s border border-grade-s/50 cursor-not-allowed"
-                  disabled
-                  title="S grade always shown"
-                >
-                  S
-                </button>
-                <button
-                  onClick={props.onToggleA}
-                  className={`px-2 py-1 rounded border ${
-                    showA
-                      ? 'bg-grade-a/20 text-grade-a border-grade-a/50'
-                      : 'bg-bg-primary text-text-muted border-bg-border'
-                  }`}
-                >
-                  A
-                </button>
-                <button
-                  onClick={props.onToggleB}
-                  className={`px-2 py-1 rounded border ${
-                    showB
-                      ? 'bg-grade-b/20 text-grade-b border-grade-b/50'
-                      : 'bg-bg-primary text-text-muted border-bg-border'
-                  }`}
-                >
-                  B
-                </button>
-              </>
-            )}
-            <button
-              onClick={props.onToggleExotic}
-              className={`px-2 py-1 rounded border ${
-                showExotic
-                  ? 'bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50'
-                  : 'bg-bg-primary text-text-muted border-bg-border'
-              }`}
-            >
-              Exotic
-            </button>
-          </div>
           {weaponFilterRelevant && (
             <div className="flex items-center gap-1">
               <span className="text-text-muted mr-1">Tier</span>
@@ -232,6 +158,16 @@ export function DropLogPanel(props: DropLogPanelProps) {
               ))}
             </div>
           )}
+          <button
+            onClick={props.onToggleExotic}
+            className={`px-2 py-1 rounded border text-xs ${
+              showExotic
+                ? 'bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50'
+                : 'bg-bg-primary text-text-muted border-bg-border'
+            }`}
+          >
+            Exotic
+          </button>
           {matchFilterRelevant && (
             <FilterGroup
               label="Match"
@@ -348,21 +284,13 @@ function DropLogRow({
           {entry.itemName}
         </div>
         <div className="text-xs text-text-muted truncate">{subtitle}</div>
-        {/* Brief #12 tier chip + Brief #11 wishlist source tags on the same
-            row below the subtitle. Tier chip leftmost so it reads as the
-            overall verdict; source chips follow as provenance detail. Row
-            renders if EITHER tier OR matches exist; guards keep pre-#11
-            and pre-#12 entries rendering cleanly. */}
-        {(entry.weaponTier ||
-          (entry.wishlistMatches && entry.wishlistMatches.length > 0)) && (
+        {/* Wishlist source tags below the subtitle. Brief #12 follow-up
+            removed the redundant left-side tier chip from this row; tier
+            now lives in the right-side chip slot below where the grade
+            chip used to live. */}
+        {entry.wishlistMatches && entry.wishlistMatches.length > 0 && (
           <div className="mt-1 flex flex-wrap items-center gap-1">
-            {entry.weaponTier && (
-              <TierChip
-                tier={entry.weaponTier}
-                title={`Best tier across matching sources: ${entry.weaponTier}`}
-              />
-            )}
-            {entry.wishlistMatches?.map((m) => (
+            {entry.wishlistMatches.map((m) => (
               <span
                 key={m.sourceId}
                 title={m.notes || m.sourceName}
@@ -379,6 +307,10 @@ function DropLogRow({
           <img key={i} src={icon} alt="" className="w-6 h-6 rounded" />
         ))}
       </div>
+      {/* Right-side chip slot. Brief #12 follow-up: tier chip replaces the
+          grade chip for legendary weapons; exotic and armor-match chips
+          unchanged (those are different concepts from tier). Empty slot when
+          a weapon has no tier metadata — grade is no longer surfaced here. */}
       {entry.isExotic ? (
         <ExoticChip />
       ) : isArmor ? (
@@ -387,8 +319,8 @@ function DropLogRow({
         ) : (
           <MatchChip matched={entry.armorMatched} />
         )
-      ) : entry.grade ? (
-        <GradeChip grade={entry.grade} />
+      ) : entry.weaponTier ? (
+        <TierChip tier={entry.weaponTier} compact />
       ) : (
         <span className="w-6 h-6 inline-block" aria-hidden="true" />
       )}

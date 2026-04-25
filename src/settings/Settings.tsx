@@ -55,8 +55,6 @@ export function Settings() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [typeFilter, setTypeFilter] = useState<DropTypeFilter>('all');
   const [matchFilter, setMatchFilter] = useState<DropMatchFilter>('all');
-  const [showA, setShowA] = useState(true);
-  const [showB, setShowB] = useState(false);
   const [showExotic, setShowExotic] = useState(true);
   // Brief #12: Drop Log tier filter visibility set. Defaults to all-on so tier
   // chips don't silently hide drops on first paint. Component-local state to
@@ -321,16 +319,12 @@ export function Settings() {
                   feed={feed}
                   typeFilter={typeFilter}
                   matchFilter={matchFilter}
-                  showA={showA}
-                  showB={showB}
                   showExotic={showExotic}
                   visibleTiers={visibleTiers}
                   nowTick={nowTick}
                   highlightInstanceId={highlightInstanceId}
                   onTypeFilterChange={setTypeFilter}
                   onMatchFilterChange={setMatchFilter}
-                  onToggleA={() => setShowA((v) => !v)}
-                  onToggleB={() => setShowB((v) => !v)}
                   onToggleExotic={() => setShowExotic((v) => !v)}
                   onToggleTier={(tier) =>
                     setVisibleTiers((prev) => {
