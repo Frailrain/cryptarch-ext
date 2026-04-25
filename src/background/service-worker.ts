@@ -134,14 +134,22 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         let itemName: string | null = null;
         let itemIcon = '';
         let weaponSubType: string | null = null;
+        const perkIcons: string[] = [];
         try {
           const def = await lookupItem(candidate.itemHash);
           itemName = def?.displayProperties?.name ?? null;
           const iconPath = def?.displayProperties?.icon;
           if (iconPath) itemIcon = `https://www.bungie.net${iconPath}`;
           weaponSubType = def?.itemTypeDisplayName ?? null;
+          // Look up icon URLs for the synthetic drop's perks so the test entry
+          // renders the same way real drops do (up to 4 perk icons in the row).
+          for (const perkHash of candidate.samplePerks.slice(0, 4)) {
+            const perkDef = await lookupItem(perkHash);
+            const perkIconPath = perkDef?.displayProperties?.icon;
+            if (perkIconPath) perkIcons.push(`https://www.bungie.net${perkIconPath}`);
+          }
         } catch {
-          // Manifest not ready or hash absent — UI falls back to hash.
+          // Manifest not ready or hash absent — UI falls back to hash; perks just empty.
         }
         appendTestDropToFeed({
           itemName: itemName ? `[Test] ${itemName}` : `[Test] item ${candidate.itemHash}`,
@@ -149,6 +157,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
           weaponType: weaponSubType,
           grade: outcome.grade,
           wishlistMatches: outcome.wishlistMatches,
+          perkIcons,
         });
         sendResponse({
           ok: true,
@@ -217,6 +226,7 @@ function appendTestDropToFeed(input: {
   weaponType: string | null;
   grade: Grade | null;
   wishlistMatches: WishlistMatch[];
+  perkIcons?: string[];
 }): void {
   const entry: DropFeedEntry = {
     instanceId: `debug-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -226,7 +236,7 @@ function appendTestDropToFeed(input: {
     grade: input.grade,
     timestamp: Date.now(),
     locked: false,
-    perkIcons: [],
+    perkIcons: input.perkIcons ?? [],
     weaponType: input.weaponType,
     armorMatched: null,
     armorClass: null,
