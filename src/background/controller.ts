@@ -35,6 +35,7 @@ import {
 } from '@/core/storage/scoring-config';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { resolveBestTier } from '@/core/wishlists/matcher';
+import { getCachedPerkPool } from '@/core/bungie/perk-pool-cache';
 import { passesRollTypeFilter, passesTierFilter } from '@/core/wishlists/filters';
 import {
   appendToFeed,
@@ -303,16 +304,53 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
 
     if (result.excluded) continue;
 
-    // Brief #14 Part B: build perkIcons + perkHashes as parallel arrays from
-    // the same source list, after filtering out perks with no icon. The hash
-    // is canonicalized via enhancedPerkMap (enhanced→base) so render-side
-    // membership checks against WishlistMatch.taggedPerkHashes match
-    // regardless of which form the wishlist source used.
-    const renderablePerks = drop.perks.slice(0, 4).filter((p) => p.plugIcon.length > 0);
+    // Brief #14.3 Bug 1: ask the perk-pool resolver which sockets count as
+    // perk columns for this weapon, then filter drop.perks to exactly those
+    // socket indices. Result: perkIcons.length matches the snapshot's
+    // columns.length precisely — collapsed row icon count tracks the
+    // weapon's actual column count instead of an arbitrary slice. Side
+    // benefit: getCachedPerkPool populates the SW cache, so the user's
+    // first click-to-expand on this drop is a memory-cache hit.
+    let perkSocketIndices: Set<number> | null = null;
+    try {
+      const snapshot = await getCachedPerkPool(drop.itemHash);
+      if (snapshot) {
+        perkSocketIndices = new Set(snapshot.columns.map((c) => c.socketIndex));
+      }
+    } catch (err) {
+      logError('scoring', 'perk pool resolve failed at capture', err);
+    }
+    // Fallback when the resolver couldn't help (manifest unavailable, weapon
+    // hash absent, no random-roll columns): take the first 6 sockets with
+    // icons. This loses the precise column-count guarantee but keeps capture
+    // working for edge-case items.
+    const renderablePerks = perkSocketIndices
+      ? drop.perks.filter((p) => perkSocketIndices!.has(p.columnIndex) && p.plugIcon.length > 0)
+      : drop.perks.slice(0, 6).filter((p) => p.plugIcon.length > 0);
+
+    // Brief #14 Part B: build perkIcons + perkHashes as parallel arrays.
+    // Hash is canonicalized via enhancedPerkMap so render-side membership
+    // checks against WishlistMatch.taggedPerkHashes match regardless of
+    // which form the wishlist source used.
+    //
+    // Brief #14.3 Bug 4: also build unlockedPerksPerColumn from each
+    // socket's unlockedPlugHashes (set of unlocked alternatives, populated
+    // in inventory.ts buildDrops). For non-crafted weapons each column's
+    // unlocked set is just [equipped]; for crafted weapons it includes
+    // every shaped alternative. Renderers use this to mark a column as
+    // "keeper-capable" if any unlocked perk in it is wishlist-tagged.
     const perkIcons = renderablePerks.map((p) => p.plugIcon);
-    const perkHashes = renderablePerks.map(
-      (p) => enhancedPerkMap.get(p.plugHash) ?? p.plugHash,
-    );
+    const canon = (h: number) => enhancedPerkMap.get(h) ?? h;
+    const perkHashes = renderablePerks.map((p) => canon(p.plugHash));
+    // Brief #14.4: socket-indexed map is the source of truth going forward.
+    // perkIcons + perkHashes (parallel arrays) stay populated for renderers
+    // that haven't migrated to the display model yet.
+    const unlockedPerksBySocketIndex: Record<number, number[]> = {};
+    for (const p of renderablePerks) {
+      unlockedPerksBySocketIndex[p.columnIndex] = (
+        p.unlockedPlugHashes ?? [p.plugHash]
+      ).map(canon);
+    }
     // Canonicalize taggedPerkHashes the same way. Wishlist sources mostly use
     // base hashes already, but a source listing an enhanced perk would get
     // misaligned without this — cheap defense-in-depth.
@@ -337,6 +375,7 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
       locked: false,
       perkIcons,
       perkHashes,
+      unlockedPerksBySocketIndex,
       weaponType: drop.itemTypeEnum === 3 ? drop.itemSubType : null,
       armorMatched: result.armorMatched,
       armorClass: result.armorRoll?.armorClass ?? null,

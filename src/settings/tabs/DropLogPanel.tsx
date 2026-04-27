@@ -413,10 +413,9 @@ function DropLogRow({
           </div>
         )}
       </div>
-      {/* Brief #14.2 Part B: rolled-perk row. One icon per column. Treatments
-          encode rolled-keeper (blue tint + glow) vs rolled-filler (dim, no
-          glow). Both have the gold border indicating "this is your roll."
-          See RolledPerkRow.tsx for the full treatment table. */}
+      {/* Brief #14.4: collapsed-row perk icons. Visual treatment derived
+          from the display model in RolledPerkRow → PerkIcon; this panel
+          contains zero direct visual logic. */}
       <RolledPerkRow entry={entry} iconSize={28} />
       {/* Right-side chip slot. Brief #12 follow-up: tier chip replaces the
           grade chip for legendary weapons; exotic and armor-match chips

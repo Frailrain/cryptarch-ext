@@ -1,38 +1,38 @@
-// Brief #14.2 Part B — collapsed-row rolled-perk display, shared by the
-// dashboard Drop Log row and the popup row. One icon per actually-rolled
-// perk column, treatment encoded per perk:
+// Brief #14.4 — collapsed-row rolled-perk display, shared by the dashboard
+// Drop Log row and the popup row. Renders the display model produced by
+// buildDropPerkDisplayModel. Contains zero direct visual logic; the
+// PerkIcon component applies treatments based on PerkVisualState alone.
 //
-//   Rolled keeper (rolled + wishlist-tagged):
-//     blue tint background, gold border, glow, full opacity
-//   Rolled filler (rolled + not tagged, OR exotic w/ no random rolls):
-//     near-black background, gold border, no glow, 0.65 opacity
-//   Legacy (entry has no itemHash — pre-Brief #14):
-//     unstyled icons, current pre-#14 treatment. The "tagged vs filler"
-//     distinction needs perk-pool data we don't have for legacy entries.
+// The model is built without a snapshot here (snapshot=undefined) because
+// the collapsed row needs to render before the SW responds. The
+// snapshotless path classifies entry.perkHashes against the wishlist's
+// flat tagged set — same per-column outcome as the with-snapshot path
+// because perks are unique to columns in practice.
 //
-// The popup variant uses smaller icons (22px) than the dashboard (28px) to
-// fit the popup's denser row layout — same treatments otherwise.
+// Legacy entries (no perkHashes / no itemHash) gracefully degrade: the
+// builder produces no columns, this component renders the unstyled
+// perkIcons array as a fallback. Pre-Brief-#14 entries still display the
+// rolled-perk icons even without classification data.
+//
+// The popup variant uses smaller icons (22px) than the dashboard (28px).
 
 import { useEffect, useReducer } from 'react';
 import type { DropFeedEntry } from '@/shared/types';
 import { getPerkName, subscribePerkNames } from '@/adapters/perk-pool-messages';
+import { buildDropPerkDisplayModel } from '@/core/wishlists/drop-display-model';
+import { PerkIcon } from './PerkIcon';
 import { PerkTooltip } from './PerkTooltip';
 
-// Hover tooltip text for a perk. Falls back to the canonical hash when the
-// page-side name cache hasn't seen this perk yet — tooltips populate as the
-// idle prewarm and expand-on-click fetches land. Don't trigger a fetch on
-// render; we settle for the hash if nothing else.
-function perkLabel(hash: number): string {
-  if (hash === -1) return '';
-  return getPerkName(hash) ?? `Perk #${hash}`;
-}
-
-// Re-render this row whenever the perk name cache gains new entries. Without
-// this, the prewarm response landing after mount populates the Map but no
-// row knows to re-read it, so tooltips stay stuck on the hash fallback.
+// Re-render this row whenever the perk name cache gains new entries — so
+// tooltips populate after the prewarm response lands.
 function usePerkNamesVersion() {
   const [, bump] = useReducer((x: number) => x + 1, 0);
   useEffect(() => subscribePerkNames(bump), []);
+}
+
+function perkLabel(hash: number): string {
+  if (hash === -1) return '';
+  return getPerkName(hash) ?? `Perk #${hash}`;
 }
 
 export function RolledPerkRow({
@@ -43,82 +43,48 @@ export function RolledPerkRow({
   iconSize?: number;
 }) {
   usePerkNamesVersion();
-  const isLegacy = entry.itemHash === undefined;
-  // Exotics don't have random rolls, so every rolled perk is treated as
-  // filler ("yours, not wishlist-evaluable"). Same gold-border, dim, no
-  // glow as a normal weapon's rolled filler.
-  const isExoticForceFiller = entry.isExotic;
+  if (entry.perkIcons.length === 0) return null;
 
-  const tagged = new Set<number>();
-  if (!isLegacy && !isExoticForceFiller) {
-    for (const m of entry.wishlistMatches ?? []) {
-      for (const h of m.taggedPerkHashes ?? []) tagged.add(h);
-    }
+  // Pre-Brief #14 entries lack perkHashes entirely. Render unstyled icons
+  // (no classification possible without hash data); same visual as the
+  // pre-#14 era so legacy rows don't regress.
+  if (!entry.perkHashes) {
+    return (
+      <div className="flex items-center gap-1">
+        {entry.perkIcons.map((icon, i) => (
+          <PerkTooltip key={i} text="">
+            <img
+              src={icon}
+              alt=""
+              className="rounded"
+              style={{ width: iconSize, height: iconSize }}
+            />
+          </PerkTooltip>
+        ))}
+      </div>
+    );
   }
 
-  if (entry.perkIcons.length === 0) return null;
+  const model = buildDropPerkDisplayModel({
+    entry,
+    wishlistMatches: entry.wishlistMatches ?? [],
+    normalize: (h) => h,
+  });
 
   return (
     <div className="flex items-center gap-1">
-      {entry.perkIcons.map((icon, i) => {
-        const hash = entry.perkHashes?.[i] ?? -1;
-        const tooltip = perkLabel(hash);
-        if (isLegacy) {
-          return (
-            <PerkTooltip key={i} text={tooltip}>
-              <img
-                src={icon}
-                alt=""
-                className="rounded"
-                style={{ width: iconSize, height: iconSize }}
-              />
-            </PerkTooltip>
-          );
-        }
-        const isKeeper = !isExoticForceFiller && tagged.has(hash);
+      {model.map((col, i) => {
+        if (!col.collapsedPerk || !col.collapsedIconUrl) return null;
         return (
-          <PerkTooltip key={i} text={tooltip}>
-            <PerkSlot
-              iconUrl={icon}
-              kind={isKeeper ? 'rolled-keeper' : 'rolled-filler'}
-              size={iconSize}
-            />
-          </PerkTooltip>
+          <PerkIcon
+            key={col.socketIndex ?? i}
+            state={col.collapsedPerk}
+            iconUrl={col.collapsedIconUrl}
+            size={iconSize}
+            tooltipText={perkLabel(col.collapsedPerk.normalizedHash)}
+          />
         );
       })}
     </div>
-  );
-}
-
-function PerkSlot({
-  iconUrl,
-  kind,
-  size,
-}: {
-  iconUrl: string;
-  kind: 'rolled-keeper' | 'rolled-filler';
-  size: number;
-}) {
-  // Inline styles for the spec'd exact values (gold #D4A82C / blue tint at
-  // 15% / near-black #1a1a1a). rahool-yellow / rahool-blue tokens align with
-  // the spec but the box-shadow glow needs an arbitrary color anyway.
-  const isKeeper = kind === 'rolled-keeper';
-  const style: React.CSSProperties = {
-    width: size,
-    height: size,
-    border: '2px solid #D4A82C',
-    background: isKeeper ? 'rgba(127, 179, 213, 0.15)' : '#1a1a1a',
-    boxShadow: isKeeper ? '0 0 4px rgba(212, 168, 44, 0.4)' : undefined,
-    opacity: isKeeper ? 1 : 0.65,
-  };
-  return (
-    <span className="inline-flex items-center justify-center rounded" style={style}>
-      <img
-        src={iconUrl}
-        alt=""
-        className="rounded"
-        style={{ width: size - 4, height: size - 4 }}
-      />
-    </span>
   );
 }

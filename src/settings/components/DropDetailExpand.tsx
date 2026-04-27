@@ -1,23 +1,11 @@
-// Brief #14.2 — inline expand panel that renders below a drop row. Each
-// random-roll column becomes a single horizontal row of icons in priority
-// order, browser-truncated when the row overflows. The visual treatment
-// gradient encodes everything — no toggles, no headers between buckets:
+// Brief #14.4 — inline expand panel. Renders the per-column display model
+// produced by buildDropPerkDisplayModel. Contains zero direct visual logic:
+// every classification (rolled? tagged?) was decided upstream by the pure
+// helpers in @/core/wishlists/{perk-visual-state,drop-display-model}.
 //
-//   Rolled keeper  (rolled + wishlist-tagged):    26px, blue tint + gold + glow
-//   Rolled filler  (rolled + not tagged):         26px, near-black + gold, dim
-//   Missed keeper  (tagged + not rolled):         22px, blue tint + faint blue
-//   Missed filler  (rest of pool):                18px, near-black, very dim
-//
-// Priority order (left to right): rolled keepers → rolled filler → missed
-// keepers → missed filler. Container uses overflow:hidden, so when the row
-// runs out of space the lowest-priority items truncate first. The user always
-// sees what they got and what they missed; only the "could have been"
-// no-decision-relevance filler ever falls off the right edge.
-//
-// The expand panel never renders without entry.itemHash (DropLogPanel guards
-// the click); inside, it fetches the enriched snapshot lazily and shows a
-// skeleton until it lands. The SW's tiered cache means second-and-later
-// clicks for the same weapon return instantly.
+// Container uses overflow-x:hidden + overflow-y:visible so icons truncate
+// horizontally when the row is too wide while tooltips that pop above the
+// icon row aren't clipped.
 
 import { useEffect, useState } from 'react';
 import type { DropFeedEntry, TierLetter, WishlistMatch } from '@/shared/types';
@@ -27,7 +15,12 @@ import {
 } from '@/adapters/perk-pool-messages';
 import { getItem } from '@/adapters/storage';
 import type { ManifestProgress } from '@/core/bungie/manifest';
-import { PerkTooltip } from './PerkTooltip';
+import {
+  buildDropPerkDisplayModel,
+  type ExpandedPerk,
+  type PerkColumnDisplayModel,
+} from '@/core/wishlists/drop-display-model';
+import { PerkIcon } from './PerkIcon';
 
 // The dashboard already keeps `manifest.progress` warm in its storage subset
 // (see settings/main.tsx). When stage is 'done', version is the live one.
@@ -40,9 +33,8 @@ function currentManifestVersion(): string | null {
 type FetchState =
   | { kind: 'loading' }
   | { kind: 'ready'; snapshot: WeaponPerkPoolSnapshot }
-  // The "no snapshot" outcome — weapon has no random-roll columns (e.g. some
-  // exotics, ghost shells), or manifest can't resolve the hash. Distinguished
-  // from 'error' so we can show a friendlier message.
+  // The "no snapshot" outcome — weapon has no random-roll columns (some
+  // exotics, ghost shells), or manifest can't resolve the hash.
   | { kind: 'no-data' }
   | { kind: 'error'; message: string };
 
@@ -51,7 +43,6 @@ export function DropDetailExpand({ entry }: { entry: DropFeedEntry }) {
 
   useEffect(() => {
     if (entry.itemHash === undefined) {
-      // Should never reach here — caller guards. Defensive fallback.
       setState({ kind: 'no-data' });
       return;
     }
@@ -73,15 +64,6 @@ export function DropDetailExpand({ entry }: { entry: DropFeedEntry }) {
       cancelled = true;
     };
   }, [entry.itemHash]);
-
-  // Cross-reference rolled + tagged hashes against each plug. Both arrays
-  // are canonicalized at capture time (Brief #14 Part B), so set-membership
-  // works directly without enhanced→base resolution here.
-  const rolledHashes = new Set(entry.perkHashes ?? []);
-  const taggedHashes = new Set<number>();
-  for (const m of entry.wishlistMatches ?? []) {
-    for (const h of m.taggedPerkHashes ?? []) taggedHashes.add(h);
-  }
 
   const currentVersion = currentManifestVersion();
   const showVersionDisclaimer =
@@ -108,16 +90,11 @@ export function DropDetailExpand({ entry }: { entry: DropFeedEntry }) {
       )}
 
       {state.kind === 'ready' && (
-        <div className="space-y-2">
-          {state.snapshot.columns.map((col) => (
-            <ColumnRow
-              key={col.socketIndex}
-              column={col}
-              rolledHashes={rolledHashes}
-              taggedHashes={taggedHashes}
-            />
-          ))}
-        </div>
+        <ExpandedColumns
+          entry={entry}
+          snapshot={state.snapshot}
+          wishlistMatches={entry.wishlistMatches ?? []}
+        />
       )}
 
       {entry.wishlistMatches && entry.wishlistMatches.length > 0 && (
@@ -143,11 +120,70 @@ export function DropDetailExpand({ entry }: { entry: DropFeedEntry }) {
   );
 }
 
+function ExpandedColumns({
+  entry,
+  snapshot,
+  wishlistMatches,
+}: {
+  entry: DropFeedEntry;
+  snapshot: WeaponPerkPoolSnapshot;
+  wishlistMatches: WishlistMatch[];
+}) {
+  // Identity normalize for now — enhanced↔base resolution happens at capture
+  // time in the controller (entry hashes are already canonicalized) and at
+  // resolve time for plug pool data. If a future bug surfaces a normalization
+  // mismatch on the page side, swap this for a real normalize function.
+  const model = buildDropPerkDisplayModel({
+    entry,
+    snapshot,
+    wishlistMatches,
+    normalize: (h) => h,
+  });
+  return (
+    <div className="space-y-2">
+      {model.map((col) => (
+        <ExpandedColumnRow key={col.socketIndex} column={col} />
+      ))}
+    </div>
+  );
+}
+
+function ExpandedColumnRow({ column }: { column: PerkColumnDisplayModel }) {
+  return (
+    <div className="space-y-1">
+      <div className="text-[11px] uppercase tracking-[0.06em] text-text-muted">
+        {column.label}
+      </div>
+      <div
+        className="flex items-center"
+        style={{
+          gap: 4,
+          flexWrap: 'nowrap',
+          // overflowX hides icons that exceed the row width — priority order
+          // means filler clips first. overflowY stays visible so PerkTooltip
+          // popups (positioned above the icon) aren't clipped.
+          overflowX: 'hidden',
+          overflowY: 'visible',
+        }}
+      >
+        {column.expandedPerks.map((p) => (
+          <ExpandedPerkIcon key={p.state.perkHash} perk={p} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExpandedPerkIcon({ perk }: { perk: ExpandedPerk }) {
+  const tooltip = perk.description
+    ? `${perk.name}\n\n${perk.description}`
+    : perk.name;
+  return <PerkIcon state={perk.state} iconUrl={perk.iconUrl} size={26} tooltipText={tooltip} />;
+}
+
 // Group matches by their cleaned note text. Voltron + Choosy Voltron typically
-// share the same note for the same roll (Choosy is a curated subset of
-// Voltron), so showing both produces a wall of duplicate text. We collapse to
-// one row per unique note with both source names listed, and pick whichever
-// tier is most-restrictive across the group.
+// share the same note for the same roll; collapse to one row per unique note
+// with both source names listed.
 const NOTE_MAX_CHARS = 220;
 function dedupeMatchesByNote(matches: WishlistMatch[]) {
   const groups = new Map<
@@ -176,8 +212,6 @@ function dedupeMatchesByNote(matches: WishlistMatch[]) {
   return Array.from(groups.values());
 }
 
-// Voltron entries have a `|tags:...` metadata trailer the user shouldn't see.
-// Strip it, then truncate the rest to keep the expand view readable.
 function cleanNote(note: string | undefined): string | null {
   if (!note) return null;
   const stripped = note.split('|tags:')[0].trim();
@@ -189,128 +223,4 @@ function cleanNote(note: string | undefined): string | null {
 const TIER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
 function tierBeats(candidate: TierLetter, current: TierLetter): boolean {
   return TIER_ORDER.indexOf(candidate) < TIER_ORDER.indexOf(current);
-}
-
-type Plug = WeaponPerkPoolSnapshot['columns'][number]['plugs'][number];
-type Treatment = 'rolled-keeper' | 'rolled-filler' | 'missed-keeper' | 'missed-filler';
-
-function ColumnRow({
-  column,
-  rolledHashes,
-  taggedHashes,
-}: {
-  column: WeaponPerkPoolSnapshot['columns'][number];
-  rolledHashes: Set<number>;
-  taggedHashes: Set<number>;
-}) {
-  // Bucket in priority order. Manifest order is preserved within each bucket
-  // (no sub-sort — the bucket itself is the sort signal).
-  const rolledKeepers: Plug[] = [];
-  const rolledFiller: Plug[] = [];
-  const missedKeepers: Plug[] = [];
-  const missedFiller: Plug[] = [];
-  for (const p of column.plugs) {
-    const rolled = rolledHashes.has(p.hash);
-    const tagged = taggedHashes.has(p.hash);
-    if (rolled && tagged) rolledKeepers.push(p);
-    else if (rolled) rolledFiller.push(p);
-    else if (tagged) missedKeepers.push(p);
-    else missedFiller.push(p);
-  }
-
-  return (
-    <div className="space-y-1">
-      <div className="text-[10px] uppercase tracking-wide text-text-muted">
-        {column.label}
-      </div>
-      <div
-        className="flex items-center"
-        style={{ gap: 4, flexWrap: 'nowrap', overflow: 'hidden' }}
-      >
-        {rolledKeepers.map((p) => (
-          <PerkIcon key={p.hash} plug={p} treatment="rolled-keeper" />
-        ))}
-        {rolledFiller.map((p) => (
-          <PerkIcon key={p.hash} plug={p} treatment="rolled-filler" />
-        ))}
-        {missedKeepers.map((p) => (
-          <PerkIcon key={p.hash} plug={p} treatment="missed-keeper" />
-        ))}
-        {missedFiller.map((p) => (
-          <PerkIcon key={p.hash} plug={p} treatment="missed-filler" />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-const TREATMENT_SIZE: Record<Treatment, number> = {
-  'rolled-keeper': 26,
-  'rolled-filler': 26,
-  'missed-keeper': 22,
-  'missed-filler': 18,
-};
-
-function PerkIcon({ plug, treatment }: { plug: Plug; treatment: Treatment }) {
-  const size = TREATMENT_SIZE[treatment];
-  // Spec calls for exact hex/rgba values that don't all line up with Tailwind
-  // tokens (gold is rahool-yellow, blue tint is rahool-blue/15, but the glow
-  // and 0.5px subtle border need arbitrary CSS). Keep all four treatments
-  // co-located here as inline styles to make tweaking the gradient easy.
-  let style: React.CSSProperties;
-  switch (treatment) {
-    case 'rolled-keeper':
-      style = {
-        width: size,
-        height: size,
-        border: '2px solid #D4A82C',
-        background: 'rgba(127, 179, 213, 0.15)',
-        boxShadow: '0 0 4px rgba(212, 168, 44, 0.4)',
-        opacity: 1,
-      };
-      break;
-    case 'rolled-filler':
-      style = {
-        width: size,
-        height: size,
-        border: '2px solid #D4A82C',
-        background: '#1a1a1a',
-        opacity: 0.65,
-      };
-      break;
-    case 'missed-keeper':
-      style = {
-        width: size,
-        height: size,
-        border: '0.5px solid rgba(127, 179, 213, 0.4)',
-        background: 'rgba(127, 179, 213, 0.15)',
-      };
-      break;
-    case 'missed-filler':
-      style = {
-        width: size,
-        height: size,
-        background: '#1a1a1a',
-        opacity: 0.4,
-      };
-      break;
-  }
-  // flex-shrink-0 prevents icon squish under the container's nowrap layout —
-  // they truncate (clip) at the right edge instead. The inner img is sized
-  // a touch smaller than the slot so the border doesn't crowd the artwork.
-  return (
-    <PerkTooltip text={plug.name}>
-      <span
-        className="inline-flex items-center justify-center rounded flex-shrink-0"
-        style={style}
-      >
-        <img
-          src={plug.iconUrl}
-          alt={plug.name}
-          className="rounded"
-          style={{ width: size - 4, height: size - 4 }}
-        />
-      </span>
-    </PerkTooltip>
-  );
 }
