@@ -16,6 +16,27 @@ interface GetResponse {
 
 type ErrorResponse = { ok: false; error?: string };
 
+// Page-side perk name cache. Populated as a side effect whenever
+// requestPerkPool succeeds — so the dashboard's idle prewarm, the popup's
+// idle prewarm, and the on-click expand fetch all contribute. Lets the
+// collapsed-row + popup-row tooltips show real perk names without firing a
+// SW message on every hover. Module-scoped → one cache per page context;
+// the popup and dashboard each maintain their own (Chrome can't share JS
+// memory across extension pages anyway).
+const nameCache = new Map<number, string>();
+
+export function getPerkName(hash: number): string | null {
+  return nameCache.get(hash) ?? null;
+}
+
+function populateNameCache(snapshot: WeaponPerkPoolSnapshot): void {
+  for (const col of snapshot.columns) {
+    for (const plug of col.plugs) {
+      nameCache.set(plug.hash, plug.name);
+    }
+  }
+}
+
 export async function requestPerkPool(
   weaponHash: number,
 ): Promise<{ ok: true; snapshot: WeaponPerkPoolSnapshot | null } | { ok: false; error: string }> {
@@ -25,6 +46,9 @@ export async function requestPerkPool(
   });
   if (!resp || !resp.ok) {
     return { ok: false, error: resp?.error ?? 'No response from background worker' };
+  }
+  if (resp.payload.snapshot) {
+    populateNameCache(resp.payload.snapshot);
   }
   return { ok: true, snapshot: resp.payload.snapshot };
 }

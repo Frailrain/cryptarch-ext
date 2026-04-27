@@ -5,6 +5,7 @@ import { loadPrimaryMembership } from '@/core/storage/tokens';
 import { getItem, onKeyChanged, setItem } from '@/adapters/storage';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
 import { RolledPerkRow } from '@/settings/components/RolledPerkRow';
+import { requestPerkPool } from '@/adapters/perk-pool-messages';
 import {
   DEFAULT_POPUP_FILTER,
   type DropFeedEntry,
@@ -83,6 +84,25 @@ export function Popup() {
       window.clearInterval(tickId);
     };
   }, []);
+
+  // Mirror DropLogPanel's idle prewarm: fire-and-forget perk-pool fetches for
+  // the latest 10 unique weapon hashes in the feed. The SW serves cached
+  // results instantly; misses populate the cache for next time. Side-effect
+  // populates the page-side perk name cache (see perk-pool-messages.ts) so
+  // popup row tooltips show real perk names instead of hash fallbacks.
+  useEffect(() => {
+    const seen = new Set<number>();
+    for (const e of feed) {
+      if (e.itemType !== 'weapon') continue;
+      if (e.itemHash === undefined) continue;
+      if (seen.has(e.itemHash)) continue;
+      seen.add(e.itemHash);
+      if (seen.size >= 10) break;
+    }
+    for (const hash of seen) {
+      void requestPerkPool(hash);
+    }
+  }, [feed]);
 
   const persistFilter = useCallback((next: PopupFilterState) => {
     setFilter(next);
