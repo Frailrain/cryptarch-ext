@@ -34,7 +34,7 @@ import {
   loadWishlistSources,
 } from '@/core/storage/scoring-config';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
-import { resolveBestTier } from '@/core/wishlists/matcher';
+import { collectWeaponGodrolls, resolveBestTier } from '@/core/wishlists/matcher';
 import { getCachedPerkPool } from '@/core/bungie/perk-pool-cache';
 import { passesRollTypeFilter, passesTierFilter } from '@/core/wishlists/filters';
 import {
@@ -351,6 +351,11 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
         p.unlockedPlugHashes ?? [p.plugHash]
       ).map(canon);
     }
+    // Brief #14.5: capture the full set of godroll perks across enabled
+    // wishlists for this weapon. Display layer gold-borders any of these
+    // even when the user didn't roll them — surfaces "what else would have
+    // been good" in the expanded view.
+    const weaponGodrollHashes = collectWeaponGodrolls(drop.itemHash).map(canon);
     // Canonicalize taggedPerkHashes the same way. Wishlist sources mostly use
     // base hashes already, but a source listing an enhanced perk would get
     // misaligned without this — cheap defense-in-depth.
@@ -376,6 +381,8 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
       perkIcons,
       perkHashes,
       unlockedPerksBySocketIndex,
+      weaponGodrollHashes:
+        weaponGodrollHashes.length > 0 ? weaponGodrollHashes : undefined,
       weaponType: drop.itemTypeEnum === 3 ? drop.itemSubType : null,
       armorMatched: result.armorMatched,
       armorClass: result.armorRoll?.armorClass ?? null,

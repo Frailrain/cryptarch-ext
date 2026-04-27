@@ -50,11 +50,15 @@ export function buildDropPerkDisplayModel(args: {
   // Wishlist-tagged hashes are flat across all matches because the wishlist
   // file format doesn't carry per-socket attribution. In practice perks are
   // unique to columns, so a flat set never produces a false positive when
-  // tested per-column.
+  // tested per-column. Brief #14.5 unions the entry's weaponGodrollHashes
+  // (every godroll perk any enabled wishlist has for this weapon) so the
+  // gold border highlights "what else would have been good," not just the
+  // perks of the matched roll.
   const taggedHashes: number[] = [];
   for (const m of args.wishlistMatches) {
     for (const h of m.taggedPerkHashes ?? []) taggedHashes.push(h);
   }
+  for (const h of args.entry.weaponGodrollHashes ?? []) taggedHashes.push(h);
 
   return args.snapshot.columns.map((col) => {
     const unlocked = unlockedBySocketIndex[col.socketIndex] ?? [];
@@ -136,6 +140,10 @@ function buildSnapshotlessModel(
   for (const m of wishlistMatches) {
     for (const h of m.taggedPerkHashes ?? []) taggedHashes.push(h);
   }
+  // Brief #14.5: same union as the with-snapshot path. Collapsed row gets
+  // gold border on equipped perks that any enabled wishlist has flagged
+  // for this weapon, even if the rolled perk wasn't in the matched entry.
+  for (const h of entry.weaponGodrollHashes ?? []) taggedHashes.push(h);
   const perkHashes = entry.perkHashes ?? [];
   const perkIcons = entry.perkIcons;
   return perkHashes.map((hash, i) => {

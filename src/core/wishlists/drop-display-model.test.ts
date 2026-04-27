@@ -239,6 +239,37 @@ describe('buildDropPerkDisplayModel — Synanceia regression', () => {
     }
   });
 
+  it('weaponGodrollHashes (Brief #14.5) gold-borders perks the user did NOT roll', () => {
+    // The entry's matched roll has [1001, 3001, 5001] tagged via Aegis.
+    // weaponGodrollHashes adds two perks the user didn't roll but Aegis
+    // flagged as godrolls in OTHER entries for this weapon: 3002 (a
+    // different Trait 1 godroll the user missed) and 4002 (a Trait 2
+    // godroll). Those should now show as missed-keepers (gold border, no
+    // blue background) in the expanded view.
+    const entryWithUnion: DropFeedEntry = {
+      ...entry,
+      weaponGodrollHashes: [1001, 3001, 5001, 3002, 4002],
+    };
+    const model = buildDropPerkDisplayModel({
+      entry: entryWithUnion,
+      snapshot,
+      wishlistMatches,
+      normalize: id,
+    });
+    const trait1 = model.find((c) => c.socketIndex === 3);
+    const trait2 = model.find((c) => c.socketIndex === 4);
+    // Trait 1 column: rolled keeper (3001) at priority 0, missed keeper
+    // (3002) at priority 2.
+    const trait1Plug3002 = trait1?.expandedPerks.find((p) => p.state.perkHash === 3002);
+    expect(trait1Plug3002?.state.isWishlistTagged).toBe(true);
+    expect(trait1Plug3002?.state.isRolledOnGun).toBe(false);
+    // Trait 2 column: rolled (4001, untagged) at priority 1, missed
+    // keeper (4002) at priority 2.
+    const trait2Plug4002 = trait2?.expandedPerks.find((p) => p.state.perkHash === 4002);
+    expect(trait2Plug4002?.state.isWishlistTagged).toBe(true);
+    expect(trait2Plug4002?.state.isRolledOnGun).toBe(false);
+  });
+
   it('crafted weapon: column with multiple unlocked perks where one is tagged → collapsed picks tagged', () => {
     const craftedEntry: DropFeedEntry = {
       ...entry,
