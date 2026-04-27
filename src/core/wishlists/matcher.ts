@@ -1,7 +1,13 @@
-import type { NewItemDrop, TierLetter, WishlistMatch } from '@/shared/types';
+import type {
+  NewItemDrop,
+  TierFilter,
+  TierLetter,
+  WishlistMatch,
+} from '@/shared/types';
 import type { ImportedWishList, WishListEntry } from '@/core/scoring/types';
 import { loadWishlistSources } from '@/core/storage/scoring-config';
 import { getAllCachedLists } from './cache';
+import { passesTierFilter } from './filters';
 
 // Tier ordering: index 0 is best (S), index 5 is worst (F). resolveBestTier
 // uses indexOf so a drop with matches at A and C resolves to A.
@@ -23,9 +29,22 @@ const TIER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
 // the user's specific drop didn't roll. Catch-all entries (itemHash === -1)
 // are included with the same logic the matcher uses for keeper detection.
 //
+// Tier filter (Brief #14.5 follow-up): exhaustive sources like Voltron list
+// many keeper entries per weapon — all reasonable rolls across PVE/PVP/etc.
+// Unioning all of them flooded D-tier weapons (e.g. Bitter End) with gold
+// borders on nearly every perk because every Voltron entry, even D-tier,
+// contributed. Filtering by the user's WeaponFilterConfig tier threshold
+// (default A) keeps the godroll union honest: low-tier weapons contribute
+// nothing to the union, the matched roll's perks still tag via
+// wishlistMatches[].taggedPerkHashes (independent path), and S/A weapons
+// behave the same as before.
+//
 // Returns the deduped union as a number[]. The controller canonicalizes
 // each hash via enhancedPerkMap before storing on the DropFeedEntry.
-export function collectWeaponGodrolls(weaponItemHash: number): number[] {
+export function collectWeaponGodrolls(
+  weaponItemHash: number,
+  tierFilter: TierFilter = 'all',
+): number[] {
   const enabledIds = new Set(
     loadWishlistSources()
       .filter((s) => s.enabled)
@@ -37,6 +56,11 @@ export function collectWeaponGodrolls(weaponItemHash: number): number[] {
     for (const entry of list.entries) {
       if (entry.isTrash) continue;
       if (entry.itemHash !== -1 && entry.itemHash !== weaponItemHash) continue;
+      // Untiered entries fail the filter when the user has set a threshold —
+      // matches the existing notification-side passesTierFilter semantics
+      // (Brief #12). Sources that don't carry tier info contribute when
+      // tierFilter === 'all'.
+      if (!passesTierFilter(entry.weaponTier, tierFilter)) continue;
       for (const p of entry.requiredPerks) godrolls.add(p);
     }
   }

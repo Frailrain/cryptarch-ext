@@ -45,6 +45,7 @@ import { loadPrimaryMembership } from '@/core/storage/tokens';
 import { loadArmorRules } from '@/core/rules/armor-rules';
 import {
   loadScoringConfig,
+  loadWeaponFilterConfig,
   loadWishlistSources,
 } from '@/core/storage/scoring-config';
 import { scoreItem } from '@/core/scoring/engine';
@@ -584,7 +585,10 @@ async function tryRealInventoryMultiSource(): Promise<{
       p.unlockedPlugHashes ?? [p.plugHash]
     ).map(canon);
   }
-  const weaponGodrollHashes = collectWeaponGodrolls(drop.itemHash).map(canon);
+  const weaponGodrollHashes = collectWeaponGodrolls(
+    drop.itemHash,
+    loadWeaponFilterConfig().tierFilter,
+  ).map(canon);
   const canonicalizedMatches = matches.map((m) =>
     m.taggedPerkHashes
       ? { ...m, taggedPerkHashes: m.taggedPerkHashes.map(canon) }

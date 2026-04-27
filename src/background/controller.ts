@@ -354,8 +354,14 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
     // Brief #14.5: capture the full set of godroll perks across enabled
     // wishlists for this weapon. Display layer gold-borders any of these
     // even when the user didn't roll them — surfaces "what else would have
-    // been good" in the expanded view.
-    const weaponGodrollHashes = collectWeaponGodrolls(drop.itemHash).map(canon);
+    // been good" in the expanded view. Filtered by the user's
+    // WeaponFilterConfig tier threshold so exhaustive sources like Voltron
+    // don't flood low-tier weapons with gold borders for every passable roll.
+    const filterConfigForGodrolls = loadWeaponFilterConfig();
+    const weaponGodrollHashes = collectWeaponGodrolls(
+      drop.itemHash,
+      filterConfigForGodrolls.tierFilter,
+    ).map(canon);
     // Canonicalize taggedPerkHashes the same way. Wishlist sources mostly use
     // base hashes already, but a source listing an enhanced perk would get
     // misaligned without this — cheap defense-in-depth.
