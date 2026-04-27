@@ -71,7 +71,7 @@ const inFlight = new Map<string, Promise<WeaponPerkPoolSnapshot | null>>();
 // updated, plug fields added/removed). Old cached snapshots become unreachable
 // and the boot-time sweep eventually reaps them. Saves us from having to ship
 // a manual cache-clear step every time we tweak the resolver.
-const CACHE_SCHEMA_VERSION = 6;
+const CACHE_SCHEMA_VERSION = 7;
 function cacheKey(manifestVersion: string, weaponHash: number): string {
   return `v${CACHE_SCHEMA_VERSION}:${manifestVersion}:${weaponHash}`;
 }
@@ -138,25 +138,46 @@ export async function resolveFromManifest(
   const columns: WeaponPerkPoolColumn[] = [];
   for (let i = 0; i < socketEntries.length; i++) {
     const entry = socketEntries[i];
-    // Most perk columns expose their pool via randomizedPlugSetHash. Origin
-    // traits are the lone exception — fixed pool of 1-3 options exposed via
-    // reusablePlugSetHash. We accept either, but for reusable-only sockets
-    // we additionally require the plug category to be 'origins' below;
-    // intrinsic frames, masterwork tier selectors, and mod slots all use
-    // reusablePlugSetHash and would otherwise produce phantom columns.
-    const plugSetHash = entry.randomizedPlugSetHash ?? entry.reusablePlugSetHash;
+    // Three sources to try, in order:
+    //   1. randomizedPlugSetHash → DestinyPlugSet (random rolls — barrels,
+    //      mags, traits, sometimes origin)
+    //   2. reusablePlugSetHash → DestinyPlugSet (fixed pools — some origins,
+    //      intrinsic frames)
+    //   3. reusablePlugItems[] inline on the socket entry (older origin
+    //      traits that don't reference a plug set at all)
+    // The reusable-category gate below still filters out non-perk sockets
+    // that match #2 or #3 (masterworks, mod slots).
     const isRandomized = !!entry.randomizedPlugSetHash;
-    if (!plugSetHash) continue;
-    const plugSet = await lookupPlugSet(plugSetHash);
-    if (!plugSet) continue;
+    let plugItemHashes: number[] = [];
+    let currentlyCanRollFilter: ((hash: number) => boolean) | null = null;
+    const plugSetHash = entry.randomizedPlugSetHash ?? entry.reusablePlugSetHash;
+    if (plugSetHash) {
+      const plugSet = await lookupPlugSet(plugSetHash);
+      if (!plugSet) continue;
+      const allow = new Set(
+        plugSet.reusablePlugItems
+          .filter((p) => p.currentlyCanRoll)
+          .map((p) => p.plugItemHash),
+      );
+      plugItemHashes = Array.from(allow);
+      currentlyCanRollFilter = (h) => allow.has(h);
+    } else if (entry.reusablePlugItems && entry.reusablePlugItems.length > 0) {
+      // No plug set; the socket carries its plug list inline. No
+      // currentlyCanRoll signal at this level — treat every listed plug as
+      // valid. The deny-list still kicks out anything cosmetic.
+      plugItemHashes = entry.reusablePlugItems.map((p) => p.plugItemHash);
+    } else {
+      continue;
+    }
+    if (plugItemHashes.length === 0) continue;
     // currentlyCanRoll filters out perks that exist in the manifest for
     // historical reasons but can't drop in the live sandbox. Matches DIM's
     // behavior — users would otherwise see deprecated perks on every weapon.
     const plugs: PerkPoolPlug[] = [];
     let firstCategory = '';
-    for (const p of plugSet.reusablePlugItems) {
-      if (!p.currentlyCanRoll) continue;
-      const def = await lookupItem(p.plugItemHash);
+    for (const hash of plugItemHashes) {
+      if (currentlyCanRollFilter && !currentlyCanRollFilter(hash)) continue;
+      const def = await lookupItem(hash);
       if (!def) continue;
       const name = def.displayProperties?.name;
       const iconPath = def.displayProperties?.icon;
@@ -169,7 +190,7 @@ export async function resolveFromManifest(
         firstCategory = def.plug?.plugCategoryIdentifier ?? '';
       }
       plugs.push({
-        hash: p.plugItemHash,
+        hash,
         name,
         iconUrl: iconPath ? `https://www.bungie.net${iconPath}` : '',
         description: def.displayProperties?.description ?? '',
