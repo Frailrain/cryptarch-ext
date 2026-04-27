@@ -77,7 +77,7 @@ const inFlight = new Map<string, Promise<WeaponPerkPoolSnapshot | null>>();
 // updated, plug fields added/removed). Old cached snapshots become unreachable
 // and the boot-time sweep eventually reaps them. Saves us from having to ship
 // a manual cache-clear step every time we tweak the resolver.
-const CACHE_SCHEMA_VERSION = 8;
+const CACHE_SCHEMA_VERSION = 9;
 function cacheKey(manifestVersion: string, weaponHash: number): string {
   return `v${CACHE_SCHEMA_VERSION}:${manifestVersion}:${weaponHash}`;
 }
@@ -205,6 +205,11 @@ export async function resolveFromManifest(
       const name = def.displayProperties?.name;
       const iconPath = def.displayProperties?.icon;
       if (!name) continue;
+      // Safety net: enhancedToBase only catches variants whose base sibling
+      // exists with the matching "Enhanced X" → "X" naming convention. Some
+      // enhanced perks slip through (variant naming, missing base sibling).
+      // A literal name-prefix check catches those without needing the map.
+      if (name.startsWith('Enhanced ')) continue;
       // Capture the first surviving plug's category so we can both filter
       // non-perk sockets and label the column. Subsequent plugs in the same
       // pool are usually the same category; using the first is correct in
@@ -255,13 +260,44 @@ export async function resolveFromManifest(
     }
   }
 
-  if (columns.length === 0) return null;
+  // Merge columns that ended up with the same label. Some weapons have
+  // multiple sockets that all expose the origin trait pool (seasonal +
+  // additional origin variants); without this merge they'd render as two
+  // identical "Origin Trait" rows. Trait columns are already disambiguated
+  // by the numbering above so they don't get collapsed.
+  const merged = new Map<string, WeaponPerkPoolColumn>();
+  const order: string[] = [];
+  for (const col of columns) {
+    const existing = merged.get(col.label);
+    if (existing) {
+      const seen = new Set(existing.plugs.map((p) => p.hash));
+      for (const p of col.plugs) {
+        if (!seen.has(p.hash)) {
+          existing.plugs.push(p);
+          seen.add(p.hash);
+        }
+      }
+      // Keep the lower socketIndex so the merged column sorts in its
+      // earliest position rather than jumping to a later one.
+      if (col.socketIndex < existing.socketIndex) {
+        existing.socketIndex = col.socketIndex;
+      }
+    } else {
+      merged.set(col.label, col);
+      order.push(col.label);
+    }
+  }
+  const finalColumns = order
+    .map((label) => merged.get(label)!)
+    .sort((a, b) => a.socketIndex - b.socketIndex);
+
+  if (finalColumns.length === 0) return null;
 
   return {
     weaponHash,
     manifestVersion,
     resolvedAt: new Date().toISOString(),
-    columns,
+    columns: finalColumns,
   };
 }
 
