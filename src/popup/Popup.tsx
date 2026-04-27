@@ -4,6 +4,7 @@ import { isLoggedIn } from '@/core/bungie/auth';
 import { loadPrimaryMembership } from '@/core/storage/tokens';
 import { getItem, onKeyChanged, setItem } from '@/adapters/storage';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
+import { RolledPerkRow } from '@/settings/components/RolledPerkRow';
 import {
   DEFAULT_POPUP_FILTER,
   type DropFeedEntry,
@@ -382,6 +383,9 @@ function DropRow({
           )}
         </span>
         {!deleted && <WishlistTag matches={entry.wishlistMatches} />}
+        {/* Brief #14.2 Part B: mirror the dashboard collapsed row's perk
+            treatment, sized down for popup density (22px vs 28px). */}
+        {!deleted && <RolledPerkRow entry={entry} iconSize={22} />}
         <span className="text-[10px] text-text-muted whitespace-nowrap">
           {deleted ? 'Dismantled' : formatRelative(nowTick - entry.timestamp)}
         </span>

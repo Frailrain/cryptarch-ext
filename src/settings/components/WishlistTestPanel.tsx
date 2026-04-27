@@ -18,12 +18,18 @@ interface CacheSummaryRow {
 type MultiSourcePayload =
   | {
       ok: true;
+      // Brief #14 Part E redesign: which path produced the test drop.
+      // 'inventory' = real weapon from user's profile (preferred). 'synthesized'
+      // = perks built from wishlist source data (fallback when user isn't
+      // signed in, has no qualifying inventory weapon, or manifest unavailable).
+      source?: 'inventory' | 'synthesized';
+      message?: string;
       itemHash: number;
       itemName: string | null;
       wishlistMatches: WishlistMatch[];
       weaponTier?: TierLetter;
-      reasons: string[];
-      perks: number[];
+      reasons?: string[];
+      perks?: number[];
     }
   | { ok: false; message: string; diagnostic?: CacheSummaryRow[] };
 
@@ -255,7 +261,24 @@ function MultiSourceResultView({ data }: { data: MultiSourcePayload }) {
             Tier {data.weaponTier}
           </span>
         )}
+        {data.source && (
+          <span
+            className={`text-[10px] px-1.5 py-0.5 rounded border ${
+              data.source === 'inventory'
+                ? 'bg-rahool-blue/15 text-rahool-blue border-rahool-blue/40'
+                : 'border-bg-border text-text-muted'
+            }`}
+            title={
+              data.source === 'inventory'
+                ? 'Real weapon from your profile — actual rolled perks'
+                : 'No qualifying inventory weapon — perks synthesized from wishlist data'
+            }
+          >
+            {data.source === 'inventory' ? 'From inventory' : 'Synthesized'}
+          </span>
+        )}
       </div>
+      {data.message && <div className="text-text-muted">{data.message}</div>}
 
       {data.wishlistMatches.length > 0 ? (
         <div className="space-y-1">
@@ -276,16 +299,18 @@ function MultiSourceResultView({ data }: { data: MultiSourcePayload }) {
         <div className="text-text-muted">No keeper matches (matcher returned an empty array).</div>
       )}
 
-      {data.reasons.length > 0 && (
+      {data.reasons && data.reasons.length > 0 && (
         <div className="text-text-muted">
           <span className="font-medium">Reasons:</span> {data.reasons.join('; ')}
         </div>
       )}
 
-      <div className="text-text-muted break-all">
-        <span className="font-medium">Perks used:</span>{' '}
-        {data.perks.length > 0 ? data.perks.join(', ') : '(none)'}
-      </div>
+      {data.perks && (
+        <div className="text-text-muted break-all">
+          <span className="font-medium">Perks used:</span>{' '}
+          {data.perks.length > 0 ? data.perks.join(', ') : '(none)'}
+        </div>
+      )}
     </div>
   );
 }
