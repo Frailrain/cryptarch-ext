@@ -39,7 +39,7 @@ import {
 } from '@/core/wishlists/cache';
 import { resolveBestTier } from '@/core/wishlists/matcher';
 import { refreshOne, validateWishlistUrl } from '@/core/wishlists/fetch';
-import { sweepStalePerkPool } from '@/core/bungie/perk-pool-cache';
+import { getCachedPerkPool, sweepStalePerkPool } from '@/core/bungie/perk-pool-cache';
 import { runPollCycle } from '@/core/bungie/inventory';
 import { loadPrimaryMembership } from '@/core/storage/tokens';
 import { loadArmorRules } from '@/core/rules/armor-rules';
@@ -176,6 +176,26 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         try {
           const result = await validateWishlistUrl(url);
           sendResponse({ ok: true, payload: result });
+        } catch (err) {
+          sendResponse({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+      if (msg.type === 'perkPool:get') {
+        // Brief #14 Part E: dashboard click-to-expand and idle prewarm both
+        // route through here. The cache module's in-flight guard coalesces
+        // overlapping requests for the same weapon (a prewarm racing a click).
+        const weaponHash = (msg.payload as { weaponHash?: number } | undefined)?.weaponHash;
+        if (typeof weaponHash !== 'number') {
+          sendResponse({ ok: false, error: 'Missing weaponHash' });
+          return;
+        }
+        try {
+          const snapshot = await getCachedPerkPool(weaponHash);
+          sendResponse({ ok: true, payload: { snapshot } });
         } catch (err) {
           sendResponse({
             ok: false,

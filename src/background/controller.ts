@@ -329,6 +329,7 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
 
     const entry: DropFeedEntry = {
       instanceId: drop.instanceId,
+      itemHash: drop.itemHash,
       itemName: drop.name,
       itemIcon: drop.iconUrl,
       itemType: drop.itemTypeEnum === 2 ? 'armor' : 'weapon',

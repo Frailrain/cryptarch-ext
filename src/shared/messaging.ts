@@ -19,7 +19,13 @@ export type MessageType =
   // Settings page is a viewer; the SW owns fetching/parsing/persisting.
   | 'wishlists:refreshOne'
   | 'wishlists:validateUrl'
-  | 'wishlists:dropSource';
+  | 'wishlists:dropSource'
+  // Brief #14 Part E: dashboard requests perk pool data from the SW. Same
+  // architectural reason as wishlist mutations — the SW holds the manifest;
+  // the page deliberately doesn't, to avoid the 30-60 MB freeze. The SW
+  // does the tiered cache lookup and returns enriched (name + icon) plug
+  // data ready to render.
+  | 'perkPool:get';
 
 export interface Message<T = unknown> {
   type: MessageType;
