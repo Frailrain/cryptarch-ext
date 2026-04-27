@@ -26,7 +26,13 @@ import {
   idbPut,
 } from '@/core/storage/indexeddb';
 import { error as logError } from '@/adapters/logger';
-import { getCachedManifest, getManifest, lookupItem, lookupPlugSet } from './manifest';
+import {
+  getCachedManifest,
+  getEnhancedPerkMap,
+  getManifest,
+  lookupItem,
+  lookupPlugSet,
+} from './manifest';
 
 // Enriched at resolve time so the dashboard can render without ever loading
 // the manifest into the page context (the manifest is 30-60 MB; settings page
@@ -71,7 +77,7 @@ const inFlight = new Map<string, Promise<WeaponPerkPoolSnapshot | null>>();
 // updated, plug fields added/removed). Old cached snapshots become unreachable
 // and the boot-time sweep eventually reaps them. Saves us from having to ship
 // a manual cache-clear step every time we tweak the resolver.
-const CACHE_SCHEMA_VERSION = 7;
+const CACHE_SCHEMA_VERSION = 8;
 function cacheKey(manifestVersion: string, weaponHash: number): string {
   return `v${CACHE_SCHEMA_VERSION}:${manifestVersion}:${weaponHash}`;
 }
@@ -134,6 +140,14 @@ export async function resolveFromManifest(
   const item = await lookupItem(weaponHash);
   if (!item) return null;
   const socketEntries = item.sockets?.socketEntries ?? [];
+  // Bungie's random plug sets often contain BOTH the base and enhanced
+  // versions of each perk. The enhanced version has a different hash that
+  // doesn't match the controller's canonicalized unlocked set (everything
+  // in the entry is base form), so the enhanced variant gets bucketed as
+  // "missed" and renders as a phantom duplicate next to its base sibling.
+  // Skipping enhanced variants up front gives one canonical entry per perk
+  // and keeps display names consistent with the wishlist's base hashes.
+  const enhancedToBase = await getEnhancedPerkMap();
 
   const columns: WeaponPerkPoolColumn[] = [];
   for (let i = 0; i < socketEntries.length; i++) {
@@ -175,8 +189,17 @@ export async function resolveFromManifest(
     // behavior — users would otherwise see deprecated perks on every weapon.
     const plugs: PerkPoolPlug[] = [];
     let firstCategory = '';
+    const seenHashes = new Set<number>();
     for (const hash of plugItemHashes) {
       if (currentlyCanRollFilter && !currentlyCanRollFilter(hash)) continue;
+      // Skip enhanced variants — only the base form of each perk should
+      // appear in the column pool. enhancedToBase.get(hash) is defined
+      // exactly for enhanced hashes; base hashes pass through.
+      if (enhancedToBase.has(hash)) continue;
+      // Defensive dedupe: some sockets (notably certain origin trait
+      // sockets) list the same plug item twice in their inline pool.
+      if (seenHashes.has(hash)) continue;
+      seenHashes.add(hash);
       const def = await lookupItem(hash);
       if (!def) continue;
       const name = def.displayProperties?.name;
