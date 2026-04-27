@@ -107,6 +107,17 @@ export interface DestinyProfileResponse {
     instances?: { data?: Record<string, DestinyItemInstance> };
     sockets?: { data?: Record<string, DestinyItemSocketsComponent> };
     stats?: { data?: Record<string, DestinyItemStatsComponent> };
+    // ProfileComponent.ItemReusablePlugs (310). Per-item map keyed by
+    // socket index → array of plug items the user has unlocked for that
+    // socket. Populated for crafted weapons (every shaped alternative)
+    // and exotic selectable-perk slots. Empty for plain random-roll
+    // sockets where the equipped plug is the only option on the instance.
+    reusablePlugs?: {
+      data?: Record<
+        string,
+        { plugs: Record<string, Array<{ plugItemHash: number; canInsert?: boolean; enabled?: boolean }>> }
+      >;
+    };
   };
 }
 

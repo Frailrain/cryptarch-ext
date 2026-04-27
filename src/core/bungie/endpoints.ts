@@ -23,4 +23,9 @@ export enum ProfileComponent {
   ItemInstances = 300,
   ItemStats = 304,
   ItemSockets = 305,
+  // 310 returns the per-socket list of unlocked plugs (crafted-weapon
+  // alternatives, exotic selectable perks). Without it, ItemSockets only
+  // exposes the currently-equipped plug; the unlocked-set on each entry
+  // would always be a single hash even when the user has multiple options.
+  ItemReusablePlugs = 310,
 }

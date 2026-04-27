@@ -93,6 +93,7 @@ const PROFILE_COMPONENTS = [
   ProfileComponent.ItemInstances,
   ProfileComponent.ItemStats,
   ProfileComponent.ItemSockets,
+  ProfileComponent.ItemReusablePlugs,
 ];
 
 export async function runPollCycle(
@@ -227,6 +228,11 @@ async function buildDrops(
   const instancesData = itemComponents.instances?.data ?? {};
   const socketsData = itemComponents.sockets?.data ?? {};
   const statsData = itemComponents.stats?.data ?? {};
+  // ProfileComponent.ItemReusablePlugs (310): per-item map of socket-index
+  // → unlocked plug list. Source of truth for "which alternatives can the
+  // user swap to in this socket?" Required for crafted-weapon and exotic
+  // selectable-perk display.
+  const reusablePlugsData = itemComponents.reusablePlugs?.data ?? {};
 
   const allRawItems = collectRawItems(profile);
   const byInstanceId = new Map<string, DestinyItemComponent>();
@@ -246,6 +252,10 @@ async function buildDrops(
     const instance = instancesData[id];
     const sockets = socketsData[id]?.sockets ?? [];
     const stats = statsData[id]?.stats ?? {};
+    // Per-instance reusable-plug map. Keyed by socket index as a string
+    // (Bungie's serialization). Values are the per-socket unlocked plug
+    // arrays. Empty when the item has no unlocked alternatives.
+    const reusableForItem = reusablePlugsData[id]?.plugs ?? {};
 
     const perks: PerkRoll[] = [];
     for (let i = 0; i < sockets.length; i++) {
@@ -253,15 +263,16 @@ async function buildDrops(
       if (typeof s.plugHash !== 'number') continue;
       const plugDef = await lookupItem(s.plugHash);
       const icon = plugDef?.displayProperties?.icon;
-      // Brief #14.3 Bug 4: capture reusablePlugs as the unlocked-alternatives
-      // set. For non-crafted weapons this is typically just [equipped perk];
-      // for crafted weapons it's every shaped alternative the user has
-      // available. Filter to canInsert + enabled so dummy/locked plug entries
-      // (which Bungie sometimes emits for unfinished crafted weapons) don't
-      // pollute the set. Fall back to undefined when the socket exposes no
-      // reusablePlugs at all — consumers treat absence as "single-perk
-      // semantics, only equipped is rolled."
-      const unlocked = s.reusablePlugs
+      // Brief #14.3 Bug 4 + #14.4 follow-up: prefer ItemReusablePlugs
+      // component data (Bungie's authoritative source for unlocked
+      // alternatives) when available. Falls back to the inline
+      // socket.reusablePlugs which only some socket types populate. Filter
+      // to canInsert + enabled so dummy/locked entries don't pollute the
+      // set. Empty unlocked array → undefined; consumers treat absence as
+      // "single-perk semantics, only equipped is rolled."
+      const reusableFromComponent = reusableForItem[String(i)];
+      const reusableSource = reusableFromComponent ?? s.reusablePlugs;
+      const unlocked = reusableSource
         ?.filter((p) => p.canInsert !== false && p.enabled !== false)
         .map((p) => p.plugItemHash);
       perks.push({
