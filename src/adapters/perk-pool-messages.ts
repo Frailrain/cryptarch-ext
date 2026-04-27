@@ -29,11 +29,30 @@ export function getPerkName(hash: number): string | null {
   return nameCache.get(hash) ?? null;
 }
 
+// React component subscription. Without this, prewarm responses landing
+// after mount populate the cache but no row re-renders, so tooltips stay
+// stuck on the hash fallback. usePerkNames() lives in RolledPerkRow.tsx
+// and friends; this just notifies them.
+const subscribers = new Set<() => void>();
+export function subscribePerkNames(cb: () => void): () => void {
+  subscribers.add(cb);
+  return () => {
+    subscribers.delete(cb);
+  };
+}
+
 function populateNameCache(snapshot: WeaponPerkPoolSnapshot): void {
+  let added = false;
   for (const col of snapshot.columns) {
     for (const plug of col.plugs) {
-      nameCache.set(plug.hash, plug.name);
+      if (!nameCache.has(plug.hash)) {
+        nameCache.set(plug.hash, plug.name);
+        added = true;
+      }
     }
+  }
+  if (added) {
+    for (const cb of subscribers) cb();
   }
 }
 

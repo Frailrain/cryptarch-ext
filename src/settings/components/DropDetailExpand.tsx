@@ -27,6 +27,7 @@ import {
 } from '@/adapters/perk-pool-messages';
 import { getItem } from '@/adapters/storage';
 import type { ManifestProgress } from '@/core/bungie/manifest';
+import { PerkTooltip } from './PerkTooltip';
 
 // The dashboard already keeps `manifest.progress` warm in its storage subset
 // (see settings/main.tsx). When stage is 'done', version is the live one.
@@ -294,24 +295,22 @@ function PerkIcon({ plug, treatment }: { plug: Plug; treatment: Treatment }) {
       };
       break;
   }
-  const tooltip = plug.description
-    ? `${plug.name}\n\n${plug.description}`
-    : plug.name;
   // flex-shrink-0 prevents icon squish under the container's nowrap layout —
   // they truncate (clip) at the right edge instead. The inner img is sized
   // a touch smaller than the slot so the border doesn't crowd the artwork.
   return (
-    <span
-      title={tooltip}
-      className="inline-flex items-center justify-center rounded flex-shrink-0"
-      style={style}
-    >
-      <img
-        src={plug.iconUrl}
-        alt={plug.name}
-        className="rounded"
-        style={{ width: size - 4, height: size - 4 }}
-      />
-    </span>
+    <PerkTooltip text={plug.name}>
+      <span
+        className="inline-flex items-center justify-center rounded flex-shrink-0"
+        style={style}
+      >
+        <img
+          src={plug.iconUrl}
+          alt={plug.name}
+          className="rounded"
+          style={{ width: size - 4, height: size - 4 }}
+        />
+      </span>
+    </PerkTooltip>
   );
 }
