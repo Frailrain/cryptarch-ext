@@ -14,6 +14,16 @@
 // fit the popup's denser row layout — same treatments otherwise.
 
 import type { DropFeedEntry } from '@/shared/types';
+import { getPerkName } from '@/adapters/perk-pool-messages';
+
+// Hover tooltip text for a perk. Falls back to the canonical hash when the
+// page-side name cache hasn't seen this perk yet — tooltips populate as the
+// idle prewarm and expand-on-click fetches land. Don't trigger a fetch on
+// render; we settle for the hash if nothing else.
+function perkLabel(hash: number): string {
+  if (hash === -1) return '';
+  return getPerkName(hash) ?? `Perk #${hash}`;
+}
 
 export function RolledPerkRow({
   entry,
@@ -40,23 +50,26 @@ export function RolledPerkRow({
   return (
     <div className="flex items-center gap-1">
       {entry.perkIcons.map((icon, i) => {
+        const hash = entry.perkHashes?.[i] ?? -1;
+        const tooltip = perkLabel(hash);
         if (isLegacy) {
           return (
             <img
               key={i}
               src={icon}
               alt=""
+              title={tooltip || undefined}
               className="rounded"
               style={{ width: iconSize, height: iconSize }}
             />
           );
         }
-        const hash = entry.perkHashes?.[i] ?? -1;
         const isKeeper = !isExoticForceFiller && tagged.has(hash);
         return (
           <PerkSlot
             key={i}
             iconUrl={icon}
+            tooltip={tooltip}
             kind={isKeeper ? 'rolled-keeper' : 'rolled-filler'}
             size={iconSize}
           />
@@ -68,10 +81,12 @@ export function RolledPerkRow({
 
 function PerkSlot({
   iconUrl,
+  tooltip,
   kind,
   size,
 }: {
   iconUrl: string;
+  tooltip: string;
   kind: 'rolled-keeper' | 'rolled-filler';
   size: number;
 }) {
@@ -88,7 +103,11 @@ function PerkSlot({
     opacity: isKeeper ? 1 : 0.65,
   };
   return (
-    <span className="inline-flex items-center justify-center rounded" style={style}>
+    <span
+      title={tooltip || undefined}
+      className="inline-flex items-center justify-center rounded"
+      style={style}
+    >
       <img
         src={iconUrl}
         alt=""
