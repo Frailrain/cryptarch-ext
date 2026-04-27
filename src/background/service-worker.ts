@@ -275,6 +275,20 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         // and cacheSummary now, but call it here too so the diagnostic snapshot
         // below sees the same warm cache the discovery does.
         await ensureWishlistCacheReady();
+        // Brief #14 Part E redesign: prefer a real inventory weapon so the
+        // expand-on-click view renders against actual rolled perks (not perks
+        // synthesized from the wishlist's required-perk list, which may not
+        // correspond to any roll the user has ever owned). Falls back to the
+        // synthetic path if not signed in or no qualifying inventory weapon.
+        const fromInventory = await tryRealInventoryMultiSource();
+        if (fromInventory) {
+          appendTestDropToFeed(fromInventory.entry);
+          sendResponse({
+            ok: true,
+            payload: { ok: true, source: 'inventory', ...fromInventory.payload },
+          });
+          return;
+        }
         // Pull a large pool of candidates so we can show variety across tiers.
         // Each click of "Run multi-source test" buckets candidates by their
         // best tier and picks a random non-empty bucket → random candidate.
@@ -328,17 +342,25 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         }
         const resolvedTier = resolveBestTier(outcome.wishlistMatches);
         appendTestDropToFeed({
+          itemHash: candidate.itemHash,
           itemName: itemName ? `[Test] ${itemName}` : `[Test] item ${candidate.itemHash}`,
           itemIcon,
           weaponType: weaponSubType,
           wishlistMatches: outcome.wishlistMatches,
           perkIcons,
+          perkHashes: candidate.samplePerks.slice(0, 4),
           weaponTier: resolvedTier,
         });
         sendResponse({
           ok: true,
           payload: {
             ok: true,
+            // Tells the test panel which path produced this drop. Inventory =
+            // real perks; synthesized = perks from the wishlist's required
+            // perks (no guarantee the user has ever owned this exact roll).
+            source: 'synthesized',
+            message:
+              'No multi-source weapon in current inventory — using synthesized test data.',
             itemHash: candidate.itemHash,
             itemName,
             wishlistMatches: outcome.wishlistMatches,
@@ -485,6 +507,91 @@ void ensureWishlistCacheReady().catch((err) => {
 // drop renders identically in DropLogPanel — same grade chip, same wishlist
 // match path, same source-tag rendering once Part F lands. The "[Test]" name
 // prefix keeps it visually distinct from real drops.
+// Brief #14 Part E redesign: scan the user's live inventory for a weapon that
+// matches 2+ enabled wishlist sources. Returns null when not signed in, no
+// inventory accessible, or no qualifying weapon — caller falls back to the
+// synthetic test path. The runPollCycle-with-empty-baseline trick mirrors
+// the wishlist-test-armor handler: every current item comes back as a "new
+// drop" with full perk metadata, and we discard cycle.updatedBaseline so the
+// real poll baseline is undisturbed.
+async function tryRealInventoryMultiSource(): Promise<{
+  entry: Parameters<typeof appendTestDropToFeed>[0];
+  payload: Record<string, unknown>;
+} | null> {
+  const membership = loadPrimaryMembership();
+  if (!membership) return null;
+  let cycle: Awaited<ReturnType<typeof runPollCycle>>;
+  try {
+    cycle = await runPollCycle(membership.membershipType, membership.membershipId, {});
+  } catch {
+    return null;
+  }
+  const weapons = cycle.newDrops.filter((d) => d.itemTypeEnum === 3);
+  if (weapons.length === 0) return null;
+
+  const config = loadScoringConfig();
+  config.armorRules = loadArmorRules();
+  let perkMap = new Map<number, number>();
+  try {
+    await getManifest();
+    perkMap = await getEnhancedPerkMap();
+  } catch {
+    return null; // no manifest = no useful matching, give up to synthetic path
+  }
+
+  // Score each weapon and keep ones that hit 2+ sources, matching the
+  // synthetic path's "multi-source" criterion. Cheap loop — scoring is
+  // cache lookups in the warmed wishlist matcher.
+  type Scored = {
+    drop: (typeof weapons)[number];
+    matches: ReturnType<typeof scoreItem>['wishlistMatches'];
+  };
+  const qualifying: Scored[] = [];
+  for (const drop of weapons) {
+    const result = scoreItem(drop, config, perkMap);
+    if (result.wishlistMatches.length >= 2) {
+      qualifying.push({ drop, matches: result.wishlistMatches });
+    }
+  }
+  if (qualifying.length === 0) return null;
+
+  const picked = qualifying[Math.floor(Math.random() * qualifying.length)];
+  const drop = picked.drop;
+  const matches = picked.matches;
+
+  // Mirror the controller's perkIcons + perkHashes capture so the test entry
+  // renders identically to a real captured drop (same canonical-form hashes,
+  // same tagged-perk highlighting in the expanded view).
+  const renderable = drop.perks.slice(0, 4).filter((p) => p.plugIcon.length > 0);
+  const perkIcons = renderable.map((p) => p.plugIcon);
+  const perkHashes = renderable.map((p) => perkMap.get(p.plugHash) ?? p.plugHash);
+  const canonicalizedMatches = matches.map((m) =>
+    m.taggedPerkHashes
+      ? { ...m, taggedPerkHashes: m.taggedPerkHashes.map((h) => perkMap.get(h) ?? h) }
+      : m,
+  );
+  const tier = resolveBestTier(canonicalizedMatches);
+
+  return {
+    entry: {
+      itemHash: drop.itemHash,
+      itemName: `[Test] ${drop.name}`,
+      itemIcon: drop.iconUrl,
+      weaponType: drop.itemSubType,
+      wishlistMatches: canonicalizedMatches,
+      perkIcons,
+      perkHashes,
+      weaponTier: tier,
+    },
+    payload: {
+      itemHash: drop.itemHash,
+      itemName: drop.name,
+      wishlistMatches: canonicalizedMatches,
+      weaponTier: tier,
+    },
+  };
+}
+
 function appendTestDropToFeed(input: {
   itemName: string;
   itemIcon: string;
@@ -492,15 +599,22 @@ function appendTestDropToFeed(input: {
   wishlistMatches: WishlistMatch[];
   perkIcons?: string[];
   weaponTier?: TierLetter;
+  // Brief #14 Part E: needed to make test drops expandable. Multi-source
+  // and fallback test paths know the itemHash; armor test path doesn't,
+  // and that's fine — expand only matters for weapons with random rolls.
+  itemHash?: number;
+  perkHashes?: number[];
 }): void {
   const entry: DropFeedEntry = {
     instanceId: `debug-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    itemHash: input.itemHash,
     itemName: input.itemName,
     itemIcon: input.itemIcon,
     itemType: 'weapon',
     timestamp: Date.now(),
     locked: false,
     perkIcons: input.perkIcons ?? [],
+    perkHashes: input.perkHashes,
     weaponType: input.weaponType,
     armorMatched: null,
     armorClass: null,

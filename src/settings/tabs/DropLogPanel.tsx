@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { DropFeedEntry, TierLetter } from '@/shared/types';
 import { TierChip } from '../components/TierChip';
 import { DropDetailExpand } from '../components/DropDetailExpand';
+import { RolledPerkRow } from '../components/RolledPerkRow';
 import { requestPerkPool } from '@/adapters/perk-pool-messages';
 
 const TIER_FILTER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
@@ -362,22 +363,6 @@ function DropLogRow({
     (isArmor && entry.armorMatched === true) ||
     (entry.wishlistMatches?.length ?? 0) > 0;
 
-  // Brief #14 Part B: union of taggedPerkHashes across all matches. Null means
-  // "no annotation available" (no matches, no per-entry perkHashes, or every
-  // match was item-only with no required perks) — caller renders all perks at
-  // full opacity. A non-null but empty set won't happen in practice because
-  // we filter to matches that actually carry tagged hashes.
-  const renderTagged: Set<number> | null = (() => {
-    if (!entry.perkHashes || entry.perkHashes.length === 0) return null;
-    const matches = entry.wishlistMatches ?? [];
-    const set = new Set<number>();
-    for (const m of matches) {
-      if (!m.taggedPerkHashes) continue;
-      for (const h of m.taggedPerkHashes) set.add(h);
-    }
-    return set.size > 0 ? set : null;
-  })();
-
   // Brief #14 Part E: rows with a known itemHash are clickable to expand
   // the perk-pool detail view. Pre-#14 entries (no itemHash) and ghost
   // entries fall through as non-clickable — nothing to look up for them.
@@ -428,25 +413,11 @@ function DropLogRow({
           </div>
         )}
       </div>
-      <div className="flex items-center gap-1">
-        {entry.perkIcons.slice(0, 4).map((icon, i) => {
-          // Brief #14 Part B: dim untagged perks when this drop carries
-          // wishlist-tagged perk hashes. Pre-#14 entries lack perkHashes
-          // entirely → renderTagged is null → render at full opacity (legacy
-          // behavior). Drops with wishlist matches but no taggedPerkHashes
-          // (item-only entries like exotics) also fall through to full opacity.
-          const tagged = renderTagged && renderTagged.has(entry.perkHashes?.[i] ?? -1);
-          const dim = renderTagged !== null && !tagged;
-          return (
-            <img
-              key={i}
-              src={icon}
-              alt=""
-              className={`w-6 h-6 rounded ${dim ? 'opacity-50' : ''}`}
-            />
-          );
-        })}
-      </div>
+      {/* Brief #14.2 Part B: rolled-perk row. One icon per column. Treatments
+          encode rolled-keeper (blue tint + glow) vs rolled-filler (dim, no
+          glow). Both have the gold border indicating "this is your roll."
+          See RolledPerkRow.tsx for the full treatment table. */}
+      <RolledPerkRow entry={entry} iconSize={28} />
       {/* Right-side chip slot. Brief #12 follow-up: tier chip replaces the
           grade chip for legendary weapons; exotic and armor-match chips
           unchanged (those are different concepts from tier). Empty slot when

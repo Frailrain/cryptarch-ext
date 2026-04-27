@@ -37,11 +37,19 @@ export interface PerkPoolPlug {
   hash: number;
   name: string;
   iconUrl: string;
+  // Brief #14 Part E redesign: shown in the per-perk hover tooltip alongside
+  // the name. Populated from manifest displayProperties.description; empty
+  // string when the manifest entry has no description (rare).
+  description: string;
 }
 
 export interface WeaponPerkPoolColumn {
   socketIndex: number;
   plugs: PerkPoolPlug[];
+  // Brief #14 Part E redesign: friendly column label ("Barrel" / "Magazine" /
+  // "Trait 1" etc.). Derived from the first plug's plugCategoryIdentifier;
+  // see labelForCategory below.
+  label: string;
 }
 
 export interface WeaponPerkPoolSnapshot {
@@ -59,8 +67,13 @@ const memoryCache = new Map<string, WeaponPerkPoolSnapshot>();
 // one Promise. Without this, we'd burn the resolver twice for nothing.
 const inFlight = new Map<string, Promise<WeaponPerkPoolSnapshot | null>>();
 
+// Bump when the resolver's output shape changes (e.g. column filtering rules
+// updated, plug fields added/removed). Old cached snapshots become unreachable
+// and the boot-time sweep eventually reaps them. Saves us from having to ship
+// a manual cache-clear step every time we tweak the resolver.
+const CACHE_SCHEMA_VERSION = 3;
 function cacheKey(manifestVersion: string, weaponHash: number): string {
-  return `${manifestVersion}:${weaponHash}`;
+  return `v${CACHE_SCHEMA_VERSION}:${manifestVersion}:${weaponHash}`;
 }
 
 // Tiered read. Returns the snapshot if any tier has it (and back-fills the
@@ -136,6 +149,7 @@ export async function resolveFromManifest(
     // historical reasons but can't drop in the live sandbox. Matches DIM's
     // behavior — users would otherwise see deprecated perks on every weapon.
     const plugs: PerkPoolPlug[] = [];
+    let firstCategory = '';
     for (const p of plugSet.reusablePlugItems) {
       if (!p.currentlyCanRoll) continue;
       const def = await lookupItem(p.plugItemHash);
@@ -143,14 +157,32 @@ export async function resolveFromManifest(
       const name = def.displayProperties?.name;
       const iconPath = def.displayProperties?.icon;
       if (!name) continue;
+      // Capture the first surviving plug's category so we can both filter
+      // non-perk sockets and label the column. Subsequent plugs in the same
+      // pool are usually the same category; using the first is correct in
+      // every case I've checked across legendary weapons.
+      if (firstCategory === '') {
+        firstCategory = def.plug?.plugCategoryIdentifier ?? '';
+      }
       plugs.push({
         hash: p.plugItemHash,
         name,
         iconUrl: iconPath ? `https://www.bungie.net${iconPath}` : '',
+        description: def.displayProperties?.description ?? '',
       });
     }
     if (plugs.length === 0) continue;
-    columns.push({ socketIndex: i, plugs });
+    // Some sockets have randomizedPlugSetHash but aren't actual perk columns
+    // (mod slots, masterwork tier selectors, kill trackers, mementos). Cheap
+    // identification: peek at the first plug's category. If it matches a
+    // known non-perk pattern, skip the column. Deny-list rather than allow-
+    // list so new perk types added by Bungie show up by default.
+    if (isNonPerkCategory(firstCategory)) continue;
+    columns.push({
+      socketIndex: i,
+      plugs,
+      label: labelForCategory(firstCategory),
+    });
   }
 
   if (columns.length === 0) return null;
@@ -170,7 +202,9 @@ export async function resolveFromManifest(
 export async function sweepStalePerkPool(): Promise<void> {
   const manifestVersion = await currentManifestVersion();
   if (!manifestVersion) return;
-  const prefix = `${manifestVersion}:`;
+  // Match cacheKey(): keep entries that share BOTH the schema version and the
+  // current manifest version. A bump to either one reaps the previous era.
+  const prefix = `v${CACHE_SCHEMA_VERSION}:${manifestVersion}:`;
   let keys: IDBValidKey[];
   try {
     keys = await idbListKeys(STORES.perkPool);
@@ -194,6 +228,45 @@ export async function sweepStalePerkPool(): Promise<void> {
     // session activity, not by a hot loop.
     console.log(`[perk-pool] sweep removed ${removed} stale entries`);
   }
+}
+
+// Maps the first plug's plugCategoryIdentifier to a friendly column header.
+// Falls back to "Perk" when the identifier doesn't match any known pattern —
+// new Bungie weapon archetypes get a sane default rather than a missing label.
+function labelForCategory(identifier: string): string {
+  if (!identifier) return 'Perk';
+  if (identifier.startsWith('barrels')) return 'Barrel';
+  if (identifier.startsWith('tubes')) return 'Tube';
+  if (identifier.startsWith('bowstrings')) return 'String';
+  if (identifier.startsWith('hafts')) return 'Haft';
+  if (identifier.startsWith('blades')) return 'Blade';
+  if (identifier.startsWith('scopes')) return 'Scope';
+  if (identifier.startsWith('arrows')) return 'Arrow';
+  if (identifier.startsWith('grips')) return 'Grip';
+  if (identifier.startsWith('stocks')) return 'Stock';
+  if (identifier.startsWith('guards')) return 'Guard';
+  if (identifier.startsWith('magazines')) return 'Magazine';
+  if (identifier === 'frames' || identifier === 'intrinsics') return 'Intrinsic';
+  if (identifier === 'origins') return 'Origin Trait';
+  if (identifier.endsWith('perk1')) return 'Trait 1';
+  if (identifier.endsWith('perk2')) return 'Trait 2';
+  if (identifier.includes('weapon.perk') || identifier.includes('weapon.trait')) return 'Trait';
+  return 'Perk';
+}
+
+// Plug category substring matches that mark a socket as cosmetic / structural
+// rather than a perk column. Conservative — anything outside these patterns
+// stays included so new Bungie perk additions don't get filtered out.
+function isNonPerkCategory(identifier: string): boolean {
+  if (!identifier) return false;
+  return (
+    identifier.startsWith('v400.empty') ||
+    identifier.includes('.weapon.mod_') ||
+    identifier.includes('masterwork') ||
+    identifier.includes('tracker') ||
+    identifier.includes('memento') ||
+    identifier === 'shader'
+  );
 }
 
 async function currentManifestVersion(): Promise<string | null> {
