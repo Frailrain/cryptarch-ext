@@ -278,9 +278,13 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
   // Manifest + enhancedPerkMap are needed by the scoring engine. If the manifest
   // hasn't downloaded yet we fall back to an empty map — weapon wishlist
   // matches will underperform for one cycle but armor scoring is unaffected.
+  // Brief #14 Part D: capture the manifest version too, stamped onto each
+  // entry below so the expand view can label "captured against v[X]" later.
   let enhancedPerkMap = new Map<number, number>();
+  let manifestVersion: string | undefined;
   try {
-    await getManifest();
+    const manifest = await getManifest();
+    manifestVersion = manifest.version;
     enhancedPerkMap = await getEnhancedPerkMap();
   } catch (err) {
     logError('scoring', 'manifest load failed; scoring with empty perk map', err);
@@ -354,6 +358,9 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
         result.wishlistMatches.length > 0
           ? resolveBestTier(result.wishlistMatches)
           : undefined,
+      // Brief #14 Part D: omitted when manifest load failed (rare). The
+      // expand-view disclaimer treats absence as "no era info available."
+      manifestVersion,
     };
     appendToFeed(entry);
     markFirstSeen(entry.instanceId, drop.detectedAt);
