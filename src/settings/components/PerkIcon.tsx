@@ -35,7 +35,7 @@ export function PerkIcon({ state, iconUrl, size, tooltipText }: PerkIconProps) {
     height: size,
   };
   if (isRolledOnGun) {
-    wrapperStyle.background = 'rgba(127, 179, 213, 0.15)';
+    wrapperStyle.background = 'rgba(127, 179, 213, 0.25)';
   }
   if (isWishlistTagged) {
     wrapperStyle.border = '2px solid #D4A82C';
