@@ -318,6 +318,22 @@ function DropLogRow({
     (isArmor && entry.armorMatched === true) ||
     (entry.wishlistMatches?.length ?? 0) > 0;
 
+  // Brief #14 Part B: union of taggedPerkHashes across all matches. Null means
+  // "no annotation available" (no matches, no per-entry perkHashes, or every
+  // match was item-only with no required perks) — caller renders all perks at
+  // full opacity. A non-null but empty set won't happen in practice because
+  // we filter to matches that actually carry tagged hashes.
+  const renderTagged: Set<number> | null = (() => {
+    if (!entry.perkHashes || entry.perkHashes.length === 0) return null;
+    const matches = entry.wishlistMatches ?? [];
+    const set = new Set<number>();
+    for (const m of matches) {
+      if (!m.taggedPerkHashes) continue;
+      for (const h of m.taggedPerkHashes) set.add(h);
+    }
+    return set.size > 0 ? set : null;
+  })();
+
   return (
     <li
       data-instance-id={entry.instanceId}
@@ -360,9 +376,23 @@ function DropLogRow({
         )}
       </div>
       <div className="flex items-center gap-1">
-        {entry.perkIcons.slice(0, 4).map((icon, i) => (
-          <img key={i} src={icon} alt="" className="w-6 h-6 rounded" />
-        ))}
+        {entry.perkIcons.slice(0, 4).map((icon, i) => {
+          // Brief #14 Part B: dim untagged perks when this drop carries
+          // wishlist-tagged perk hashes. Pre-#14 entries lack perkHashes
+          // entirely → renderTagged is null → render at full opacity (legacy
+          // behavior). Drops with wishlist matches but no taggedPerkHashes
+          // (item-only entries like exotics) also fall through to full opacity.
+          const tagged = renderTagged && renderTagged.has(entry.perkHashes?.[i] ?? -1);
+          const dim = renderTagged !== null && !tagged;
+          return (
+            <img
+              key={i}
+              src={icon}
+              alt=""
+              className={`w-6 h-6 rounded ${dim ? 'opacity-50' : ''}`}
+            />
+          );
+        })}
       </div>
       {/* Right-side chip slot. Brief #12 follow-up: tier chip replaces the
           grade chip for legendary weapons; exotic and armor-match chips

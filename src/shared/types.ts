@@ -96,6 +96,13 @@ export interface WishlistMatch {
   sourceName: string;
   notes?: string;
   weaponTier?: TierLetter;
+  // Brief #14 Part B: the wishlist entry's required perk hashes for this
+  // match — i.e. the perks the source explicitly flagged for this roll.
+  // Stored canonical (base form, not enhanced) so render-side membership
+  // checks against DropFeedEntry.perkHashes work directly. Absent on legacy
+  // pre-#14 matches; renderers must guard with optional chaining and treat
+  // missing as "no annotation available, render all perks at full opacity."
+  taggedPerkHashes?: number[];
 }
 
 export interface DropFeedEntry {
@@ -106,6 +113,11 @@ export interface DropFeedEntry {
   timestamp: number;
   locked: boolean;
   perkIcons: string[];
+  // Brief #14 Part B: plug hashes parallel to perkIcons (same length, same
+  // order). Each hash is canonical-form (enhanced perks resolved to their
+  // base hash via enhancedPerkMap at capture time) so set-membership against
+  // WishlistMatch.taggedPerkHashes works directly. Absent on pre-#14 entries.
+  perkHashes?: number[];
   weaponType: string | null;
   armorMatched: boolean | null;
   armorClass: 'Titan' | 'Hunter' | 'Warlock' | null;
