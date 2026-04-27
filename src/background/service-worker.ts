@@ -39,6 +39,7 @@ import {
 } from '@/core/wishlists/cache';
 import { resolveBestTier } from '@/core/wishlists/matcher';
 import { refreshOne, validateWishlistUrl } from '@/core/wishlists/fetch';
+import { sweepStalePerkPool } from '@/core/bungie/perk-pool-cache';
 import { runPollCycle } from '@/core/bungie/inventory';
 import { loadPrimaryMembership } from '@/core/storage/tokens';
 import { loadArmorRules } from '@/core/rules/armor-rules';
@@ -76,14 +77,24 @@ chrome.runtime.onInstalled.addListener((details) => {
   // Kick off manifest download proactively so the options page can clear its
   // first-boot loading card without waiting for the user to sign in or for
   // the first drop to trigger a lazy fetch.
-  void kickoffManifestLoad();
+  void bootManifestThenSweep();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   log('sw', 'onStartup');
   void ensurePollAlarm();
-  void kickoffManifestLoad();
+  void bootManifestThenSweep();
 });
+
+// Brief #14 Part C: chain the perk-pool sweep after manifest load. By the
+// time kickoffManifestLoad resolves the SW has been awake long enough that
+// the "skip if SW just woke" guard from the brief is automatically satisfied,
+// and the manifest version is now known. If kickoffManifestLoad failed, the
+// sweep no-ops (currentManifestVersion returns null inside the cache module).
+async function bootManifestThenSweep(): Promise<void> {
+  await kickoffManifestLoad();
+  await sweepStalePerkPool();
+}
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== POLL_ALARM_NAME) return;

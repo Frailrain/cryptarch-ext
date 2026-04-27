@@ -145,6 +145,11 @@ export interface DestinyInventoryItem {
       socketTypeHash: number;
       singleInitialItemHash?: number;
       reusablePlugItems?: Array<{ plugItemHash: number }>;
+      // Brief #14 Part C: random-roll perk pool. Set on legendary weapon
+      // perk sockets (barrel/mag/perk1/perk2 and sometimes origin trait);
+      // resolved via DestinyPlugSetDefinition[hash] → reusablePlugItems[].
+      randomizedPlugSetHash?: number;
+      reusablePlugSetHash?: number;
     }>;
   };
   plug?: {
@@ -156,6 +161,21 @@ export interface DestinyInventoryItem {
 export interface DestinyStat {
   hash: number;
   displayProperties: DisplayProperties;
+}
+
+// Brief #14 Part C: a "plug set" enumerates the plugs (perks, mods, etc.)
+// available to a socket. For random-roll weapons the matcher resolves
+// socketEntries[i].randomizedPlugSetHash → DestinyPlugSet to enumerate the
+// pool of perks that could have rolled in column i. currentlyCanRoll flags
+// perks that are deprecated in the live sandbox (kept in the manifest for
+// historical drops); the perk-pool cache filters to currentlyCanRoll = true
+// so the dashboard doesn't display perks the user can't actually get.
+export interface DestinyPlugSet {
+  hash: number;
+  reusablePlugItems: Array<{
+    plugItemHash: number;
+    currentlyCanRoll: boolean;
+  }>;
 }
 
 export interface SetLockStateBody {

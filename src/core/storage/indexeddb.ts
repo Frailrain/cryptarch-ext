@@ -4,11 +4,19 @@
 // is re-acquired after the worker goes to sleep and wakes up.
 
 const DB_NAME = 'cryptarch';
-const DB_VERSION = 1;
+// Bumped to 2 in Brief #14 Part C to add the perkPool store. Existing manifest
+// + dropLog stores survive — IDB upgrade callbacks are additive when the new
+// version only creates new stores.
+const DB_VERSION = 2;
 
 export const STORES = {
   manifest: 'manifest',
   dropLog: 'drop-log',
+  // Brief #14 Part C: persistent tier of the perk-pool cache, keyed by
+  // `${manifestVersion}:${weaponHash}`. Survives browser restarts so a user's
+  // second-ever click on the same weapon is instant even after Chrome cleared
+  // chrome.storage.session.
+  perkPool: 'perk-pool',
 } as const;
 
 export type StoreName = (typeof STORES)[keyof typeof STORES];
@@ -27,6 +35,12 @@ export function idbOpen(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORES.dropLog)) {
         const store = db.createObjectStore(STORES.dropLog, { keyPath: 'instanceId' });
         store.createIndex('detectedAt', 'detectedAt');
+      }
+      if (!db.objectStoreNames.contains(STORES.perkPool)) {
+        // Plain key/value store — keys are `${manifestVersion}:${weaponHash}`
+        // strings, values are WeaponPerkPoolSnapshot objects. No indexes;
+        // lookups are point queries by exact key.
+        db.createObjectStore(STORES.perkPool);
       }
     };
     req.onsuccess = () => resolve(req.result);
