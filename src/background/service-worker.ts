@@ -37,7 +37,7 @@ import {
   hydrateWishlistCacheForWorker,
   removeFromCache,
 } from '@/core/wishlists/cache';
-import { resolveBestTier } from '@/core/wishlists/matcher';
+import { collectWeaponGodrolls, resolveBestTier } from '@/core/wishlists/matcher';
 import { refreshOne, validateWishlistUrl } from '@/core/wishlists/fetch';
 import { getCachedPerkPool, sweepStalePerkPool } from '@/core/bungie/perk-pool-cache';
 import { runPollCycle } from '@/core/bungie/inventory';
@@ -584,6 +584,7 @@ async function tryRealInventoryMultiSource(): Promise<{
       p.unlockedPlugHashes ?? [p.plugHash]
     ).map(canon);
   }
+  const weaponGodrollHashes = collectWeaponGodrolls(drop.itemHash).map(canon);
   const canonicalizedMatches = matches.map((m) =>
     m.taggedPerkHashes
       ? { ...m, taggedPerkHashes: m.taggedPerkHashes.map(canon) }
@@ -601,6 +602,8 @@ async function tryRealInventoryMultiSource(): Promise<{
       perkIcons,
       perkHashes,
       unlockedPerksBySocketIndex,
+      weaponGodrollHashes:
+        weaponGodrollHashes.length > 0 ? weaponGodrollHashes : undefined,
       weaponTier: tier,
     },
     payload: {
@@ -629,6 +632,9 @@ function appendTestDropToFeed(input: {
   // so the display model falls back to single-perk-per-column from
   // perkHashes alone.
   unlockedPerksBySocketIndex?: Record<number, number[]>;
+  // Brief #14.5: union of every keeper-entry perk hash across enabled
+  // wishlists for this weapon. Same canonicalization the controller does.
+  weaponGodrollHashes?: number[];
 }): void {
   const entry: DropFeedEntry = {
     instanceId: `debug-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -641,6 +647,7 @@ function appendTestDropToFeed(input: {
     perkIcons: input.perkIcons ?? [],
     perkHashes: input.perkHashes,
     unlockedPerksBySocketIndex: input.unlockedPerksBySocketIndex,
+    weaponGodrollHashes: input.weaponGodrollHashes,
     weaponType: input.weaponType,
     armorMatched: null,
     armorClass: null,

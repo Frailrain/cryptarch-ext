@@ -17,6 +17,32 @@ const TIER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
  * their notes. Tier filtering treats undefined as below-F (does not pass
  * any letter threshold), see Brief #12 Part C.
  */
+// Brief #14.5: collect every keeper-entry perk hash for this weapon across
+// every enabled wishlist. Used by the display layer to gold-border perks
+// that any wishlist considers a godroll for this weapon — including ones
+// the user's specific drop didn't roll. Catch-all entries (itemHash === -1)
+// are included with the same logic the matcher uses for keeper detection.
+//
+// Returns the deduped union as a number[]. The controller canonicalizes
+// each hash via enhancedPerkMap before storing on the DropFeedEntry.
+export function collectWeaponGodrolls(weaponItemHash: number): number[] {
+  const enabledIds = new Set(
+    loadWishlistSources()
+      .filter((s) => s.enabled)
+      .map((s) => s.id),
+  );
+  const lists = getAllCachedLists().filter((list) => enabledIds.has(list.id));
+  const godrolls = new Set<number>();
+  for (const list of lists) {
+    for (const entry of list.entries) {
+      if (entry.isTrash) continue;
+      if (entry.itemHash !== -1 && entry.itemHash !== weaponItemHash) continue;
+      for (const p of entry.requiredPerks) godrolls.add(p);
+    }
+  }
+  return Array.from(godrolls);
+}
+
 export function resolveBestTier(matches: WishlistMatch[]): TierLetter | undefined {
   let bestIdx: number | null = null;
   for (const m of matches) {

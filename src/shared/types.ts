@@ -160,6 +160,14 @@ export interface DropFeedEntry {
   // pool for the expand-on-click view (which calls perkPool:get with this).
   // Absent on pre-#14 entries — those rows aren't expandable.
   itemHash?: number;
+  // Brief #14.5: union of every keeper-entry perk hash any enabled wishlist
+  // flagged as a godroll for this weapon — including ones the drop didn't
+  // roll. Display layer gold-borders any of these whether or not the user
+  // actually got them, so the expand view shows "what else would have been
+  // good." Canonicalized via enhancedPerkMap at capture time. Absent on
+  // pre-#14.5 entries; renderers treat absence as "no extra godrolls beyond
+  // wishlistMatches[].taggedPerkHashes."
+  weaponGodrollHashes?: number[];
   // Brief #14 Part D: Bungie manifest version active at drop capture time.
   // Used by the expand-on-click view to label "captured against v[X]" when
   // it differs from current — perk pools and tier readings shift across
