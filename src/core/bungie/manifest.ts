@@ -7,12 +7,18 @@ import {
 } from '@/core/storage/indexeddb';
 import { error as logError } from '@/adapters/logger';
 import { fetchManifestComponent, getManifestInfo } from './api';
-import type { DestinyInventoryItem, DestinyStat } from './types';
+import type { DestinyInventoryItem, DestinyPlugSet, DestinyStat } from './types';
 
 const LOCALE = 'en';
+// Brief #14 Part C added DestinyPlugSetDefinition. First boot after the
+// upgrade will re-download the manifest because the previously cached version
+// doesn't include the new component — users see the manifest loading card
+// once. The plug-set table is the source of truth for the random-roll perk
+// pool that the perk-pool cache resolves on click.
 const COMPONENTS_WE_NEED = [
   'DestinyInventoryItemDefinition',
   'DestinyStatDefinition',
+  'DestinyPlugSetDefinition',
 ] as const;
 
 type ComponentName = (typeof COMPONENTS_WE_NEED)[number];
@@ -23,6 +29,7 @@ export interface ManifestCache {
   definitions: {
     DestinyInventoryItemDefinition: Record<number, DestinyInventoryItem>;
     DestinyStatDefinition: Record<number, DestinyStat>;
+    DestinyPlugSetDefinition: Record<number, DestinyPlugSet>;
   };
   downloadedAt: number;
 }
@@ -134,6 +141,8 @@ export async function getManifest(): Promise<ManifestCache> {
           (downloaded.DestinyInventoryItemDefinition as Record<number, DestinyInventoryItem>) ?? {},
         DestinyStatDefinition:
           (downloaded.DestinyStatDefinition as Record<number, DestinyStat>) ?? {},
+        DestinyPlugSetDefinition:
+          (downloaded.DestinyPlugSetDefinition as Record<number, DestinyPlugSet>) ?? {},
       },
       downloadedAt: Date.now(),
     };
@@ -167,6 +176,11 @@ export async function lookupItem(hash: number): Promise<DestinyInventoryItem | n
 export async function lookupStat(hash: number): Promise<DestinyStat | null> {
   const m = await getManifest();
   return m.definitions.DestinyStatDefinition[hash] ?? null;
+}
+
+export async function lookupPlugSet(hash: number): Promise<DestinyPlugSet | null> {
+  const m = await getManifest();
+  return m.definitions.DestinyPlugSetDefinition[hash] ?? null;
 }
 
 export function getCachedManifest(): ManifestCache | null {
