@@ -109,11 +109,20 @@ export function matchDropAgainstWishlists(
   for (const list of lists) {
     const perListResult = matchDropAgainstSingleList(drop, list, resolvedPerks);
     if (perListResult.keeper) {
+      // Brief #14 Part B: copy requiredPerks onto the match so the dashboard
+      // can dim non-tagged rolled perks. Empty when the wishlist entry had
+      // no perk requirements (item-only match like an exotic) — renderer
+      // treats that as "no annotation, all perks full opacity."
+      const taggedPerkHashes =
+        perListResult.keeper.requiredPerks.length > 0
+          ? [...perListResult.keeper.requiredPerks]
+          : undefined;
       keeperMatches.push({
         sourceId: list.id,
         sourceName: list.name,
         notes: perListResult.keeper.notes ? perListResult.keeper.notes : undefined,
         weaponTier: perListResult.keeper.weaponTier,
+        taggedPerkHashes,
       });
       if (!firstKeeper) {
         firstKeeper = { entry: perListResult.keeper, sourceName: list.name };

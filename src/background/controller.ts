@@ -299,6 +299,30 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
 
     if (result.excluded) continue;
 
+    // Brief #14 Part B: build perkIcons + perkHashes as parallel arrays from
+    // the same source list, after filtering out perks with no icon. The hash
+    // is canonicalized via enhancedPerkMap (enhanced→base) so render-side
+    // membership checks against WishlistMatch.taggedPerkHashes match
+    // regardless of which form the wishlist source used.
+    const renderablePerks = drop.perks.slice(0, 4).filter((p) => p.plugIcon.length > 0);
+    const perkIcons = renderablePerks.map((p) => p.plugIcon);
+    const perkHashes = renderablePerks.map(
+      (p) => enhancedPerkMap.get(p.plugHash) ?? p.plugHash,
+    );
+    // Canonicalize taggedPerkHashes the same way. Wishlist sources mostly use
+    // base hashes already, but a source listing an enhanced perk would get
+    // misaligned without this — cheap defense-in-depth.
+    const canonicalizedMatches = result.wishlistMatches.map((m) =>
+      m.taggedPerkHashes
+        ? {
+            ...m,
+            taggedPerkHashes: m.taggedPerkHashes.map(
+              (h) => enhancedPerkMap.get(h) ?? h,
+            ),
+          }
+        : m,
+    );
+
     const entry: DropFeedEntry = {
       instanceId: drop.instanceId,
       itemName: drop.name,
@@ -306,10 +330,8 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
       itemType: drop.itemTypeEnum === 2 ? 'armor' : 'weapon',
       timestamp: drop.detectedAt,
       locked: false,
-      perkIcons: drop.perks
-        .slice(0, 4)
-        .map((p) => p.plugIcon)
-        .filter((i) => i.length > 0),
+      perkIcons,
+      perkHashes,
       weaponType: drop.itemTypeEnum === 3 ? drop.itemSubType : null,
       armorMatched: result.armorMatched,
       armorClass: result.armorRoll?.armorClass ?? null,
@@ -324,8 +346,7 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
       // Omit the field entirely when there are no matches so legacy entries
       // (pre-#11) and no-match entries render identically through optional
       // chaining downstream. UI treats absent and empty as equivalent.
-      wishlistMatches:
-        result.wishlistMatches.length > 0 ? result.wishlistMatches : undefined,
+      wishlistMatches: canonicalizedMatches.length > 0 ? canonicalizedMatches : undefined,
       // Brief #12: best tier across this drop's matches, resolved once at
       // capture time so renderers and the notification filter don't recompute.
       // Absent when no match has tier data (Voltron-only drops, custom URLs).
