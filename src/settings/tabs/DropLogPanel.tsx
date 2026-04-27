@@ -1,6 +1,8 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { DropFeedEntry, TierLetter } from '@/shared/types';
 import { TierChip } from '../components/TierChip';
+import { DropDetailExpand } from '../components/DropDetailExpand';
+import { requestPerkPool } from '@/adapters/perk-pool-messages';
 
 const TIER_FILTER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
 
@@ -72,7 +74,12 @@ function LockIcon({
     return (
       <button
         type="button"
-        onClick={onLock}
+        onClick={(e) => {
+          // Brief #14 Part E: row body is clickable for expand. Stop propagation
+          // here so a lock click doesn't also toggle the expand state.
+          e.stopPropagation();
+          onLock();
+        }}
         title="Click to lock this drop"
         aria-label="lock this drop"
         className="text-text-muted/60 hover:text-rahool-yellow cursor-pointer"
@@ -133,6 +140,33 @@ export function DropLogPanel(props: DropLogPanelProps) {
 
   const weaponFilterRelevant = typeFilter !== 'armor';
   const matchFilterRelevant = typeFilter !== 'weapon';
+
+  // Brief #14 Part E: which row (if any) is expanded inline. Single-expand
+  // policy keeps visual noise low and matches DIM's interaction.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Brief #14 Part E idle-time prewarm: as soon as the dashboard mounts,
+  // kick off perk-pool fetches for the most recent 10 unique weapon hashes
+  // in the feed. The SW's tiered cache + in-flight guard mean this is safe
+  // to fire-and-forget; second-and-later opens of the same drop are then
+  // instant. We only prewarm weapons (armor has no random-roll perk pool
+  // worth looking up here).
+  useEffect(() => {
+    const seen = new Set<number>();
+    for (const e of feed) {
+      if (e.itemType !== 'weapon') continue;
+      if (e.itemHash === undefined) continue;
+      if (seen.has(e.itemHash)) continue;
+      seen.add(e.itemHash);
+      if (seen.size >= 10) break;
+    }
+    for (const hash of seen) {
+      void requestPerkPool(hash);
+    }
+    // Re-run whenever the feed changes (new drops shift the recency window).
+    // Cheap because the cache hits short-circuit; only genuinely new hashes
+    // pay the resolve cost.
+  }, [feed]);
 
   const visible = useMemo(() => {
     return feed.filter((e) => {
@@ -246,6 +280,12 @@ export function DropLogPanel(props: DropLogPanelProps) {
               nowTick={nowTick}
               highlighted={entry.instanceId === highlightInstanceId}
               onLockDrop={props.onLockDrop}
+              expanded={expandedId === entry.instanceId}
+              onToggleExpand={() =>
+                setExpandedId((prev) =>
+                  prev === entry.instanceId ? null : entry.instanceId,
+                )
+              }
             />
           ))}
         </ul>
@@ -290,11 +330,15 @@ function DropLogRow({
   nowTick,
   highlighted,
   onLockDrop,
+  expanded,
+  onToggleExpand,
 }: {
   entry: DropFeedEntry;
   nowTick: number;
   highlighted: boolean;
   onLockDrop: (instanceId: string) => void;
+  expanded: boolean;
+  onToggleExpand: () => void;
 }) {
   const isArmor = entry.itemType === 'armor';
   const isMatchedArmor = isArmor && entry.armorMatched === true;
@@ -334,13 +378,22 @@ function DropLogRow({
     return set.size > 0 ? set : null;
   })();
 
+  // Brief #14 Part E: rows with a known itemHash are clickable to expand
+  // the perk-pool detail view. Pre-#14 entries (no itemHash) and ghost
+  // entries fall through as non-clickable — nothing to look up for them.
+  const expandable = entry.itemHash !== undefined && !entry.deleted;
+
   return (
     <li
       data-instance-id={entry.instanceId}
-      className={`py-2.5 flex items-center gap-3 px-2 rounded ${tinted} ${
+      className={`py-2.5 px-2 rounded ${tinted} ${
         highlighted ? 'pulse-highlight' : ''
       } ${entry.deleted ? 'opacity-60' : ''}`}
     >
+      <div
+        className={`flex items-center gap-3 ${expandable ? 'cursor-pointer' : ''}`}
+        onClick={expandable ? onToggleExpand : undefined}
+      >
       {entry.itemIcon ? (
         <img
           src={entry.itemIcon}
@@ -429,6 +482,8 @@ function DropLogRow({
           ? `Dismantled ${formatRelativeTimestamp(nowTick - entry.timestamp)}`
           : formatRelativeTimestamp(nowTick - entry.timestamp)}
       </div>
+      </div>
+      {expanded && expandable && <DropDetailExpand entry={entry} />}
     </li>
   );
 }

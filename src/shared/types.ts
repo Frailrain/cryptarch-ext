@@ -144,6 +144,10 @@ export interface DropFeedEntry {
   // Resolved at drop time via resolveBestTier so renderers don't recompute per
   // frame. Absent when no match has tier metadata or when drops are pre-#12.
   weaponTier?: TierLetter;
+  // Brief #14 Part E: weapon/armor itemHash. Needed to look up the perk
+  // pool for the expand-on-click view (which calls perkPool:get with this).
+  // Absent on pre-#14 entries — those rows aren't expandable.
+  itemHash?: number;
   // Brief #14 Part D: Bungie manifest version active at drop capture time.
   // Used by the expand-on-click view to label "captured against v[X]" when
   // it differs from current — perk pools and tier readings shift across

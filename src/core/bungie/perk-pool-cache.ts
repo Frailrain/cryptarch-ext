@@ -28,9 +28,20 @@ import {
 import { error as logError } from '@/adapters/logger';
 import { getCachedManifest, getManifest, lookupItem, lookupPlugSet } from './manifest';
 
+// Enriched at resolve time so the dashboard can render without ever loading
+// the manifest into the page context (the manifest is 30-60 MB; settings page
+// deliberately doesn't hold it — see Brief #12.5). Each plug carries its name
+// and icon URL alongside the hash, which costs ~80 bytes per plug but
+// eliminates the need for a second IPC roundtrip per render.
+export interface PerkPoolPlug {
+  hash: number;
+  name: string;
+  iconUrl: string;
+}
+
 export interface WeaponPerkPoolColumn {
   socketIndex: number;
-  plugHashes: number[];
+  plugs: PerkPoolPlug[];
 }
 
 export interface WeaponPerkPoolSnapshot {
@@ -43,6 +54,10 @@ export interface WeaponPerkPoolSnapshot {
 const SESSION_KEY_PREFIX = 'cryptarch:perk-pool:';
 
 const memoryCache = new Map<string, WeaponPerkPoolSnapshot>();
+// In-flight guard: parallel calls for the same weapon (idle prewarm racing a
+// user click on the same row, or two prewarms from overlapping mounts) share
+// one Promise. Without this, we'd burn the resolver twice for nothing.
+const inFlight = new Map<string, Promise<WeaponPerkPoolSnapshot | null>>();
 
 function cacheKey(manifestVersion: string, weaponHash: number): string {
   return `${manifestVersion}:${weaponHash}`;
@@ -60,28 +75,39 @@ export async function getCachedPerkPool(
   if (!manifestVersion) return null;
   const key = cacheKey(manifestVersion, weaponHash);
 
+  // Fast path: memory hit. No async work, no in-flight bookkeeping needed.
   const fromMemory = memoryCache.get(key);
   if (fromMemory) return fromMemory;
 
-  const fromSession = await readFromSession(key);
-  if (fromSession) {
-    memoryCache.set(key, fromSession);
-    return fromSession;
-  }
+  // Coalesce concurrent misses for the same key onto one promise.
+  const existing = inFlight.get(key);
+  if (existing) return existing;
 
-  const fromIdb = await readFromIdb(key);
-  if (fromIdb) {
-    memoryCache.set(key, fromIdb);
-    void writeToSession(key, fromIdb);
-    return fromIdb;
+  const work = (async () => {
+    const fromSession = await readFromSession(key);
+    if (fromSession) {
+      memoryCache.set(key, fromSession);
+      return fromSession;
+    }
+    const fromIdb = await readFromIdb(key);
+    if (fromIdb) {
+      memoryCache.set(key, fromIdb);
+      void writeToSession(key, fromIdb);
+      return fromIdb;
+    }
+    const resolved = await resolveFromManifest(weaponHash, manifestVersion);
+    if (!resolved) return null;
+    memoryCache.set(key, resolved);
+    void writeToSession(key, resolved);
+    void writeToIdb(key, resolved);
+    return resolved;
+  })();
+  inFlight.set(key, work);
+  try {
+    return await work;
+  } finally {
+    inFlight.delete(key);
   }
-
-  const resolved = await resolveFromManifest(weaponHash, manifestVersion);
-  if (!resolved) return null;
-  memoryCache.set(key, resolved);
-  void writeToSession(key, resolved);
-  void writeToIdb(key, resolved);
-  return resolved;
 }
 
 // Resolve a weapon's column-by-column perk pool from the manifest. Public so
@@ -109,11 +135,22 @@ export async function resolveFromManifest(
     // currentlyCanRoll filters out perks that exist in the manifest for
     // historical reasons but can't drop in the live sandbox. Matches DIM's
     // behavior — users would otherwise see deprecated perks on every weapon.
-    const plugHashes = plugSet.reusablePlugItems
-      .filter((p) => p.currentlyCanRoll)
-      .map((p) => p.plugItemHash);
-    if (plugHashes.length === 0) continue;
-    columns.push({ socketIndex: i, plugHashes });
+    const plugs: PerkPoolPlug[] = [];
+    for (const p of plugSet.reusablePlugItems) {
+      if (!p.currentlyCanRoll) continue;
+      const def = await lookupItem(p.plugItemHash);
+      if (!def) continue;
+      const name = def.displayProperties?.name;
+      const iconPath = def.displayProperties?.icon;
+      if (!name) continue;
+      plugs.push({
+        hash: p.plugItemHash,
+        name,
+        iconUrl: iconPath ? `https://www.bungie.net${iconPath}` : '',
+      });
+    }
+    if (plugs.length === 0) continue;
+    columns.push({ socketIndex: i, plugs });
   }
 
   if (columns.length === 0) return null;
