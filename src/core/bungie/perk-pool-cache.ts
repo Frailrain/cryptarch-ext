@@ -71,7 +71,7 @@ const inFlight = new Map<string, Promise<WeaponPerkPoolSnapshot | null>>();
 // updated, plug fields added/removed). Old cached snapshots become unreachable
 // and the boot-time sweep eventually reaps them. Saves us from having to ship
 // a manual cache-clear step every time we tweak the resolver.
-const CACHE_SCHEMA_VERSION = 3;
+const CACHE_SCHEMA_VERSION = 6;
 function cacheKey(manifestVersion: string, weaponHash: number): string {
   return `v${CACHE_SCHEMA_VERSION}:${manifestVersion}:${weaponHash}`;
 }
@@ -138,12 +138,16 @@ export async function resolveFromManifest(
   const columns: WeaponPerkPoolColumn[] = [];
   for (let i = 0; i < socketEntries.length; i++) {
     const entry = socketEntries[i];
-    // Random-roll perk columns are the ones with randomizedPlugSetHash.
-    // reusablePlugSetHash exists on fixed-roll sockets (e.g. masterworks,
-    // some adept perks) but those aren't part of the user-facing "what
-    // could have rolled here" question. Skip them.
-    if (!entry.randomizedPlugSetHash) continue;
-    const plugSet = await lookupPlugSet(entry.randomizedPlugSetHash);
+    // Most perk columns expose their pool via randomizedPlugSetHash. Origin
+    // traits are the lone exception — fixed pool of 1-3 options exposed via
+    // reusablePlugSetHash. We accept either, but for reusable-only sockets
+    // we additionally require the plug category to be 'origins' below;
+    // intrinsic frames, masterwork tier selectors, and mod slots all use
+    // reusablePlugSetHash and would otherwise produce phantom columns.
+    const plugSetHash = entry.randomizedPlugSetHash ?? entry.reusablePlugSetHash;
+    const isRandomized = !!entry.randomizedPlugSetHash;
+    if (!plugSetHash) continue;
+    const plugSet = await lookupPlugSet(plugSetHash);
     if (!plugSet) continue;
     // currentlyCanRoll filters out perks that exist in the manifest for
     // historical reasons but can't drop in the live sandbox. Matches DIM's
@@ -178,11 +182,33 @@ export async function resolveFromManifest(
     // known non-perk pattern, skip the column. Deny-list rather than allow-
     // list so new perk types added by Bungie show up by default.
     if (isNonPerkCategory(firstCategory)) continue;
+    // Reusable-only sockets: allow the three perk-bearing kinds (origins,
+    // intrinsics, frames). Everything else (masterwork tier selectors,
+    // mod slots, etc.) is either caught by the deny-list above or filtered
+    // here. Skipping reusable sockets without one of these categories
+    // prevents phantom columns from arbitrary reusable pools.
+    if (!isRandomized && !isPerkBearingReusableCategory(firstCategory)) continue;
     columns.push({
       socketIndex: i,
       plugs,
-      label: labelForCategory(firstCategory),
+      label: labelForColumn(firstCategory, isRandomized, plugs.length),
     });
+  }
+
+  // Bungie tags trait perks (column 1 + column 2 traits) with the same
+  // 'intrinsics' plug category as the actual intrinsic frame. labelForColumn
+  // returns "Trait" for randomized intrinsics-categoried columns; here we
+  // walk in socket order and number them. A weapon with one Trait column
+  // (rare) keeps the bare "Trait" label.
+  let traitCounter = 0;
+  const traitTotal = columns.filter((c) => c.label === 'Trait').length;
+  if (traitTotal > 1) {
+    for (const col of columns) {
+      if (col.label === 'Trait') {
+        traitCounter++;
+        col.label = `Trait ${traitCounter}`;
+      }
+    }
   }
 
   if (columns.length === 0) return null;
@@ -233,7 +259,17 @@ export async function sweepStalePerkPool(): Promise<void> {
 // Maps the first plug's plugCategoryIdentifier to a friendly column header.
 // Falls back to "Perk" when the identifier doesn't match any known pattern —
 // new Bungie weapon archetypes get a sane default rather than a missing label.
-function labelForCategory(identifier: string): string {
+//
+// "intrinsics" is overloaded by Bungie: it labels both the actual intrinsic
+// frame (single-plug, fixed) AND each trait column's pool (multi-plug,
+// randomized). We disambiguate by isRandomized + plug count; the
+// post-process in resolveFromManifest then numbers multi-trait weapons as
+// "Trait 1" / "Trait 2".
+function labelForColumn(
+  identifier: string,
+  isRandomized: boolean,
+  plugCount: number,
+): string {
   if (!identifier) return 'Perk';
   if (identifier.startsWith('barrels')) return 'Barrel';
   if (identifier.startsWith('tubes')) return 'Tube';
@@ -246,12 +282,29 @@ function labelForCategory(identifier: string): string {
   if (identifier.startsWith('stocks')) return 'Stock';
   if (identifier.startsWith('guards')) return 'Guard';
   if (identifier.startsWith('magazines')) return 'Magazine';
-  if (identifier === 'frames' || identifier === 'intrinsics') return 'Intrinsic';
   if (identifier === 'origins') return 'Origin Trait';
+  if (identifier === 'frames' || identifier === 'intrinsics') {
+    // Random multi-plug pool with intrinsics category = a trait column.
+    // Single-plug or reusable-only = the actual intrinsic frame.
+    if (isRandomized && plugCount > 1) return 'Trait';
+    return 'Intrinsic';
+  }
   if (identifier.endsWith('perk1')) return 'Trait 1';
   if (identifier.endsWith('perk2')) return 'Trait 2';
   if (identifier.includes('weapon.perk') || identifier.includes('weapon.trait')) return 'Trait';
   return 'Perk';
+}
+
+// Categories on reusable-only sockets that count as user-meaningful perk
+// columns. Origin traits and the intrinsic frame; nothing else. Masterwork
+// tier selectors, kill trackers, mods all have other categories already
+// caught by isNonPerkCategory or aren't reusable.
+function isPerkBearingReusableCategory(identifier: string): boolean {
+  return (
+    identifier === 'origins' ||
+    identifier === 'intrinsics' ||
+    identifier === 'frames'
+  );
 }
 
 // Plug category substring matches that mark a socket as cosmetic / structural

@@ -253,12 +253,24 @@ async function buildDrops(
       if (typeof s.plugHash !== 'number') continue;
       const plugDef = await lookupItem(s.plugHash);
       const icon = plugDef?.displayProperties?.icon;
+      // Brief #14.3 Bug 4: capture reusablePlugs as the unlocked-alternatives
+      // set. For non-crafted weapons this is typically just [equipped perk];
+      // for crafted weapons it's every shaped alternative the user has
+      // available. Filter to canInsert + enabled so dummy/locked plug entries
+      // (which Bungie sometimes emits for unfinished crafted weapons) don't
+      // pollute the set. Fall back to undefined when the socket exposes no
+      // reusablePlugs at all — consumers treat absence as "single-perk
+      // semantics, only equipped is rolled."
+      const unlocked = s.reusablePlugs
+        ?.filter((p) => p.canInsert !== false && p.enabled !== false)
+        .map((p) => p.plugItemHash);
       perks.push({
         columnIndex: i,
         plugHash: s.plugHash,
         plugName: plugDef?.displayProperties.name ?? `Plug ${s.plugHash}`,
         plugIcon: icon ? `${BUNGIE_ORIGIN}${icon}` : '',
         isActive: true,
+        unlockedPlugHashes: unlocked && unlocked.length > 0 ? unlocked : undefined,
       });
     }
 

@@ -560,14 +560,33 @@ async function tryRealInventoryMultiSource(): Promise<{
   const matches = picked.matches;
 
   // Mirror the controller's perkIcons + perkHashes capture so the test entry
-  // renders identically to a real captured drop (same canonical-form hashes,
-  // same tagged-perk highlighting in the expanded view).
-  const renderable = drop.perks.slice(0, 4).filter((p) => p.plugIcon.length > 0);
+  // renders identically to a real captured drop. Filter by perk-pool snapshot
+  // socket indices when available (Brief #14.3 Bug 1) so the test row's
+  // column count matches a real drop's column count.
+  let perkIndices: Set<number> | null = null;
+  try {
+    const snapshot = await getCachedPerkPool(drop.itemHash);
+    if (snapshot) {
+      perkIndices = new Set(snapshot.columns.map((c) => c.socketIndex));
+    }
+  } catch {
+    // ignore — falls back to slice
+  }
+  const renderable = perkIndices
+    ? drop.perks.filter((p) => perkIndices!.has(p.columnIndex) && p.plugIcon.length > 0)
+    : drop.perks.slice(0, 6).filter((p) => p.plugIcon.length > 0);
+  const canon = (h: number) => perkMap.get(h) ?? h;
   const perkIcons = renderable.map((p) => p.plugIcon);
-  const perkHashes = renderable.map((p) => perkMap.get(p.plugHash) ?? p.plugHash);
+  const perkHashes = renderable.map((p) => canon(p.plugHash));
+  const unlockedPerksBySocketIndex: Record<number, number[]> = {};
+  for (const p of renderable) {
+    unlockedPerksBySocketIndex[p.columnIndex] = (
+      p.unlockedPlugHashes ?? [p.plugHash]
+    ).map(canon);
+  }
   const canonicalizedMatches = matches.map((m) =>
     m.taggedPerkHashes
-      ? { ...m, taggedPerkHashes: m.taggedPerkHashes.map((h) => perkMap.get(h) ?? h) }
+      ? { ...m, taggedPerkHashes: m.taggedPerkHashes.map(canon) }
       : m,
   );
   const tier = resolveBestTier(canonicalizedMatches);
@@ -581,6 +600,7 @@ async function tryRealInventoryMultiSource(): Promise<{
       wishlistMatches: canonicalizedMatches,
       perkIcons,
       perkHashes,
+      unlockedPerksBySocketIndex,
       weaponTier: tier,
     },
     payload: {
@@ -604,6 +624,11 @@ function appendTestDropToFeed(input: {
   // and that's fine — expand only matters for weapons with random rolls.
   itemHash?: number;
   perkHashes?: number[];
+  // Brief #14.4: per-socket unlocked set. Real-inventory test path
+  // populates this from drop.perks; the synthesized path leaves it absent
+  // so the display model falls back to single-perk-per-column from
+  // perkHashes alone.
+  unlockedPerksBySocketIndex?: Record<number, number[]>;
 }): void {
   const entry: DropFeedEntry = {
     instanceId: `debug-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -615,6 +640,7 @@ function appendTestDropToFeed(input: {
     locked: false,
     perkIcons: input.perkIcons ?? [],
     perkHashes: input.perkHashes,
+    unlockedPerksBySocketIndex: input.unlockedPerksBySocketIndex,
     weaponType: input.weaponType,
     armorMatched: null,
     armorClass: null,

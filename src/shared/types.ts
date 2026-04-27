@@ -118,6 +118,18 @@ export interface DropFeedEntry {
   // base hash via enhancedPerkMap at capture time) so set-membership against
   // WishlistMatch.taggedPerkHashes works directly. Absent on pre-#14 entries.
   perkHashes?: number[];
+  // Brief #14.3 Bug 4 (deprecated by #14.4): parallel-array shape, kept for
+  // legacy reads. New entries write unlockedPerksBySocketIndex below; the
+  // display model builder converts old shape on read.
+  unlockedPerksPerColumn?: number[][];
+  // Brief #14.4: per-socket unlocked set, keyed by manifest socket index
+  // rather than by parallel array position. Eliminates index-drift bugs
+  // when the captured perk count diverges from the rendered column count.
+  // Inner array contains canonical-form hashes (enhanced→base) the user
+  // has unlocked in that socket. For non-crafted random-roll drops it's
+  // [equippedPerkHash]; for crafted weapons it includes every shaped
+  // alternative.
+  unlockedPerksBySocketIndex?: Record<number, number[]>;
   weaponType: string | null;
   armorMatched: boolean | null;
   armorClass: 'Titan' | 'Hunter' | 'Warlock' | null;
@@ -240,6 +252,14 @@ export interface PerkRoll {
   plugName: string;
   plugIcon: string;
   isActive: boolean;
+  // Brief #14.3 Bug 4: full set of unlocked alternatives the user can swap
+  // to in this socket. For non-crafted random-roll drops this is just
+  // [plugHash] (only the equipped perk is "rolled"). For crafted weapons
+  // it's every shaped perk the user has unlocked. Source: socket's
+  // reusablePlugs[].plugItemHash, filtered to canInsert + enabled. Absent
+  // when the inventory snapshot didn't include reusablePlugs (treat as
+  // single-perk fallback at consume time).
+  unlockedPlugHashes?: number[];
 }
 
 export interface DiagnosticSocketDump {
