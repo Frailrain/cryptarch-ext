@@ -13,8 +13,10 @@
 // The popup variant uses smaller icons (22px) than the dashboard (28px) to
 // fit the popup's denser row layout — same treatments otherwise.
 
+import { useEffect, useReducer } from 'react';
 import type { DropFeedEntry } from '@/shared/types';
-import { getPerkName } from '@/adapters/perk-pool-messages';
+import { getPerkName, subscribePerkNames } from '@/adapters/perk-pool-messages';
+import { PerkTooltip } from './PerkTooltip';
 
 // Hover tooltip text for a perk. Falls back to the canonical hash when the
 // page-side name cache hasn't seen this perk yet — tooltips populate as the
@@ -25,6 +27,14 @@ function perkLabel(hash: number): string {
   return getPerkName(hash) ?? `Perk #${hash}`;
 }
 
+// Re-render this row whenever the perk name cache gains new entries. Without
+// this, the prewarm response landing after mount populates the Map but no
+// row knows to re-read it, so tooltips stay stuck on the hash fallback.
+function usePerkNamesVersion() {
+  const [, bump] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => subscribePerkNames(bump), []);
+}
+
 export function RolledPerkRow({
   entry,
   iconSize = 28,
@@ -32,6 +42,7 @@ export function RolledPerkRow({
   entry: DropFeedEntry;
   iconSize?: number;
 }) {
+  usePerkNamesVersion();
   const isLegacy = entry.itemHash === undefined;
   // Exotics don't have random rolls, so every rolled perk is treated as
   // filler ("yours, not wishlist-evaluable"). Same gold-border, dim, no
@@ -54,25 +65,25 @@ export function RolledPerkRow({
         const tooltip = perkLabel(hash);
         if (isLegacy) {
           return (
-            <img
-              key={i}
-              src={icon}
-              alt=""
-              title={tooltip || undefined}
-              className="rounded"
-              style={{ width: iconSize, height: iconSize }}
-            />
+            <PerkTooltip key={i} text={tooltip}>
+              <img
+                src={icon}
+                alt=""
+                className="rounded"
+                style={{ width: iconSize, height: iconSize }}
+              />
+            </PerkTooltip>
           );
         }
         const isKeeper = !isExoticForceFiller && tagged.has(hash);
         return (
-          <PerkSlot
-            key={i}
-            iconUrl={icon}
-            tooltip={tooltip}
-            kind={isKeeper ? 'rolled-keeper' : 'rolled-filler'}
-            size={iconSize}
-          />
+          <PerkTooltip key={i} text={tooltip}>
+            <PerkSlot
+              iconUrl={icon}
+              kind={isKeeper ? 'rolled-keeper' : 'rolled-filler'}
+              size={iconSize}
+            />
+          </PerkTooltip>
         );
       })}
     </div>
@@ -81,12 +92,10 @@ export function RolledPerkRow({
 
 function PerkSlot({
   iconUrl,
-  tooltip,
   kind,
   size,
 }: {
   iconUrl: string;
-  tooltip: string;
   kind: 'rolled-keeper' | 'rolled-filler';
   size: number;
 }) {
@@ -103,11 +112,7 @@ function PerkSlot({
     opacity: isKeeper ? 1 : 0.65,
   };
   return (
-    <span
-      title={tooltip || undefined}
-      className="inline-flex items-center justify-center rounded"
-      style={style}
-    >
+    <span className="inline-flex items-center justify-center rounded" style={style}>
       <img
         src={iconUrl}
         alt=""
