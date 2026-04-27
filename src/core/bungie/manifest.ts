@@ -190,24 +190,56 @@ export function getCachedManifest(): ManifestCache | null {
 let enhancedPerkMapCache: Map<number, number> | null = null;
 let enhancedPerkMapPromise: Promise<Map<number, number>> | null = null;
 
-// TODO: upgrade to plug-identifier-based matching for edge cases (Battery / Barrel false positives)
+// Detects enhanced perks via two patterns Bungie has used over time:
+//
+//   1. Legacy ("Enhanced X" name): pre-tier-5 era. The enhanced perk is
+//      literally named "Enhanced Outlaw" with a base sibling "Outlaw."
+//   2. Modern (matching name + "Enhanced *" itemTypeDisplayName): tier 5
+//      sandbox era. Both base and enhanced share the SAME name (e.g.
+//      "Auto-Loading Holster") and only differ on itemTypeDisplayName
+//      ("Enhanced Trait" vs "Trait", "Enhanced Origin Trait" vs "Origin
+//      Trait", etc.). The display name was the only field we could find
+//      that reliably distinguishes them across all perk categories.
+//
+// Both patterns map enhanced hash → base hash by name lookup, so the
+// downstream canonicalization (controller's `canon` + display model
+// normalize) works for either era.
+function isEnhancedTypeDisplayName(def: DestinyInventoryItem): boolean {
+  return (def.itemTypeDisplayName ?? '').startsWith('Enhanced ');
+}
+
 export function buildEnhancedPerkMap(manifest: ManifestCache): Map<number, number> {
   const map = new Map<number, number>();
   const items = manifest.definitions.DestinyInventoryItemDefinition;
 
+  // Build base index. A def is "base" when it isn't flagged enhanced by
+  // either pattern. First match per name wins (multiple base defs sharing
+  // a name is rare; when it happens we pick the first encountered).
   const baseByName = new Map<string, number>();
   for (const [hashStr, def] of Object.entries(items)) {
     const name = def.displayProperties?.name;
-    if (!name || name.startsWith('Enhanced ')) continue;
+    if (!name) continue;
+    if (name.startsWith('Enhanced ')) continue;
+    if (isEnhancedTypeDisplayName(def)) continue;
     if (!baseByName.has(name)) baseByName.set(name, Number(hashStr));
   }
 
   for (const [hashStr, def] of Object.entries(items)) {
     const name = def.displayProperties?.name;
-    if (!name || !name.startsWith('Enhanced ')) continue;
-    const baseName = name.slice('Enhanced '.length);
+    if (!name) continue;
+    let baseName: string | null = null;
+    if (name.startsWith('Enhanced ')) {
+      baseName = name.slice('Enhanced '.length);
+    } else if (isEnhancedTypeDisplayName(def)) {
+      // Modern enhancement: enhanced and base share the same name.
+      baseName = name;
+    } else {
+      continue;
+    }
     const baseHash = baseByName.get(baseName);
-    if (baseHash !== undefined) map.set(Number(hashStr), baseHash);
+    if (baseHash !== undefined && baseHash !== Number(hashStr)) {
+      map.set(Number(hashStr), baseHash);
+    }
   }
 
   return map;
