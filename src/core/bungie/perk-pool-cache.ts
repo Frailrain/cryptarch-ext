@@ -77,7 +77,7 @@ const inFlight = new Map<string, Promise<WeaponPerkPoolSnapshot | null>>();
 // updated, plug fields added/removed). Old cached snapshots become unreachable
 // and the boot-time sweep eventually reaps them. Saves us from having to ship
 // a manual cache-clear step every time we tweak the resolver.
-const CACHE_SCHEMA_VERSION = 9;
+const CACHE_SCHEMA_VERSION = 10;
 function cacheKey(manifestVersion: string, weaponHash: number): string {
   return `v${CACHE_SCHEMA_VERSION}:${manifestVersion}:${weaponHash}`;
 }
@@ -190,6 +190,7 @@ export async function resolveFromManifest(
     const plugs: PerkPoolPlug[] = [];
     let firstCategory = '';
     const seenHashes = new Set<number>();
+    const seenNames = new Set<string>();
     for (const hash of plugItemHashes) {
       if (currentlyCanRollFilter && !currentlyCanRollFilter(hash)) continue;
       // Skip enhanced variants — only the base form of each perk should
@@ -210,6 +211,17 @@ export async function resolveFromManifest(
       // enhanced perks slip through (variant naming, missing base sibling).
       // A literal name-prefix check catches those without needing the map.
       if (name.startsWith('Enhanced ')) continue;
+      // Skip placeholder plugs ("Empty Traits Socket" and friends) that
+      // Bungie includes as default-equipped items on unlocked sockets.
+      // Not perks — just "no perk equipped" markers.
+      if (name.startsWith('Empty ') || name === 'Empty Mod Socket') continue;
+      // Same-name dedupe on top of same-hash dedupe. Bungie's plug sets
+      // sometimes contain multiple hashes for the same perk — alternate
+      // release versions (Rite of Nine reissues, focused/curated variants,
+      // etc.) all named identically. Render-time the user can't tell them
+      // apart; the visual is one entry per unique perk.
+      if (seenNames.has(name)) continue;
+      seenNames.add(name);
       // Capture the first surviving plug's category so we can both filter
       // non-perk sockets and label the column. Subsequent plugs in the same
       // pool are usually the same category; using the first is correct in
@@ -270,12 +282,17 @@ export async function resolveFromManifest(
   for (const col of columns) {
     const existing = merged.get(col.label);
     if (existing) {
-      const seen = new Set(existing.plugs.map((p) => p.hash));
+      // Merge dedupes by both hash AND name. Same-hash dedupe handles the
+      // identical-plug case; name dedupe handles "different release version
+      // of the same perk" — distinct hashes, identical names, visually
+      // duplicate to the user.
+      const seenHashes = new Set(existing.plugs.map((p) => p.hash));
+      const seenNames = new Set(existing.plugs.map((p) => p.name));
       for (const p of col.plugs) {
-        if (!seen.has(p.hash)) {
-          existing.plugs.push(p);
-          seen.add(p.hash);
-        }
+        if (seenHashes.has(p.hash) || seenNames.has(p.name)) continue;
+        existing.plugs.push(p);
+        seenHashes.add(p.hash);
+        seenNames.add(p.name);
       }
       // Keep the lower socketIndex so the merged column sorts in its
       // earliest position rather than jumping to a later one.
