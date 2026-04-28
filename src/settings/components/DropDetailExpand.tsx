@@ -242,12 +242,13 @@ function ExpandedColumnRow({ column }: { column: PerkColumnDisplayModel }) {
         className="flex items-center"
         style={{
           gap: 4,
+          // Brief #21 follow-up: dropped overflowX:hidden + overflowY:visible
+          // — that combo hits a CSS spec quirk (one-axis clipping forces the
+          // other axis to clip too in most browsers) and was hiding the
+          // PerkTooltip popups. Rows now use natural width; with the dedupe
+          // and enhanced-perk filtering from #14.5/#14.6, columns rarely have
+          // more than 10-14 plugs and don't need clipping.
           flexWrap: 'nowrap',
-          // overflowX hides icons that exceed the row width — priority order
-          // means filler clips first. overflowY stays visible so PerkTooltip
-          // popups (positioned above the icon) aren't clipped.
-          overflowX: 'hidden',
-          overflowY: 'visible',
         }}
       >
         {column.expandedPerks.map((p) => (
