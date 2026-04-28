@@ -84,23 +84,19 @@ export function saveWishlistMetadata(meta: WishlistMetadata[]): void {
 // Lazy default: if nothing is stored, return a fresh copy of the builtins
 // without persisting. Persistence happens only on an explicit saveWishlistSources
 // call. Avoids races when popup + Dashboard both load on first run.
-//
-// Note for future briefs: if we ever ship a new builtin source after #11, this
-// helper will need a one-shot merge step so existing users pick it up. Out of
-// scope for #11 (we ship 4 builtins and don't change them).
 export function loadWishlistSources(): WishlistSource[] {
   const stored = getItem<WishlistSource[]>(WISHLIST_SOURCES_KEY);
   if (!stored || stored.length === 0) {
     return BUILTIN_WISHLIST_SOURCES.map((s) => ({ ...s }));
   }
   // Merge built-in metadata into stored entries by id so post-Brief #11
-  // additions (description tweaks, the new pveOriented/pvpOriented flags)
-  // reach upgraded users without requiring a one-shot migration. User-
-  // controlled fields (enabled) win; static fields (URL, description,
-  // orientation) come from the latest builtins. Custom sources pass through
-  // unchanged.
+  // additions (description tweaks, the pveOriented/pvpOriented flags) reach
+  // upgraded users without requiring a one-shot migration. User-controlled
+  // fields (enabled) win; static fields (URL, description, orientation)
+  // come from the latest builtins. Custom sources pass through unchanged.
   const builtinById = new Map(BUILTIN_WISHLIST_SOURCES.map((b) => [b.id, b]));
-  return stored.map((s) => {
+  const storedIds = new Set(stored.map((s) => s.id));
+  const result = stored.map((s) => {
     const builtin = builtinById.get(s.id);
     if (!builtin) return s;
     return {
@@ -108,6 +104,17 @@ export function loadWishlistSources(): WishlistSource[] {
       enabled: s.enabled,
     };
   });
+  // Brief #18: append any built-in id missing from stored. Picks up new
+  // sources shipped after the user's first install (e.g. the Charles MRF_PPC0
+  // tier-coverage source added in v0.3.x) without requiring storage clear.
+  // New built-ins arrive with their declared `enabled` default; the user can
+  // toggle later from the Weapons tab.
+  for (const b of BUILTIN_WISHLIST_SOURCES) {
+    if (!storedIds.has(b.id)) {
+      result.push({ ...b });
+    }
+  }
+  return result;
 }
 
 export function saveWishlistSources(sources: WishlistSource[]): void {
