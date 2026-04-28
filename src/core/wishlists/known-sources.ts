@@ -52,10 +52,18 @@ export const BUILTIN_WISHLIST_SOURCES: WishlistSource[] = [
     pvpOriented: false,
   },
   {
+    // Brief #21 follow-up: disabled by default. Voltron alone is the
+    // confirmation signal under the current model; Choosy Voltron added
+    // duplicative matches (every drop that matched Voltron also matched
+    // Choosy → multi-source test always returned 2+ matches even when no
+    // genuine cross-curator agreement existed). The id stays in the
+    // built-in list so the loader recognizes it as a built-in (not a
+    // user-removable custom source) and the always-override-built-in-state
+    // rule keeps it off without user action required.
     id: 'choosy-voltron',
     name: 'Choosy Voltron',
     url: 'https://raw.githubusercontent.com/48klocs/dim-wish-list-sources/master/choosy_voltron.txt',
-    enabled: true,
+    enabled: false,
     builtin: true,
     description:
       'Voltron plus opinionated "trash" rolls. Helps identify rolls you should dismantle.',
