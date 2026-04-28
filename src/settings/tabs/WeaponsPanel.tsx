@@ -1,96 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  loadCharlesSourceConfig,
   loadWeaponFilterConfig,
-  loadWishlistSources,
+  saveCharlesSourceConfig,
   saveWeaponFilterConfig,
-  saveWishlistSources,
 } from '@/core/storage/scoring-config';
 import { onKeyChanged } from '@/adapters/storage';
-import { refreshWishlists } from '@/core/wishlists/fetch';
-import type {
-  RollTypeFilter,
-  TierFilter,
-  WeaponFilterConfig,
-  WishlistSource,
-} from '@/shared/types';
+import { requestRefreshOne } from '@/adapters/wishlist-messages';
+import { CHARLES_SOURCE_ID } from '@/core/wishlists/known-sources';
+import type { CharlesSourceConfig, WeaponFilterConfig } from '@/shared/types';
 import { WishlistsPanel } from './WishlistsPanel';
 
-// Brief #12 Part E. Composes the new top-section filter UI with the existing
-// (Brief #11) WishlistsPanel as the bottom "Manage sources" section.
+// Brief #19. The Weapons tab is the user's "what to be notified about" surface.
+// Charles's two-axis selector (minTier S-F + perks-per-column 0-3) drives the
+// active wishlist URL; lower-priority "manage individual sources" stays below
+// for power users who want to enable Voltron, deprecated Aegis sources, or
+// custom URLs.
 //
-// Preset semantics: a preset declares "this set of built-in sources should be
-// enabled, others off." Custom sources are intentionally orthogonal — applying
-// a preset does not touch them, and detection of the active preset only
-// considers built-ins. Without that, a user with any custom source would always
-// see "Custom" because their state could never match a preset's exact shape.
+// The selector swaps the active Charles file dynamically. Each change writes
+// charlesSourceConfig and triggers a force-refetch of the Charles source so
+// the new file's contents land in the wishlist cache before the next drop is
+// scored. Old config's parsed entries are dropped — no per-config caching in
+// this brief; toggling between configs costs another fetch each time.
 
-interface WishlistPreset {
-  id: string;
-  label: string;
-  description: string;
-  enabledBuiltinIds: Set<string>;
-}
-
-const PRESETS: WishlistPreset[] = [
-  {
-    id: 'recommended-starter',
-    label: 'Recommended starter',
-    description: 'Voltron broad coverage + Aegis Endgame for tier-rated rolls.',
-    enabledBuiltinIds: new Set(['voltron', 'aegis-endgame']),
-  },
-  {
-    id: 'strict-pve-keepers',
-    label: 'Strict PVE keepers',
-    description:
-      "Aegis Exclusive (S-tier only) plus Voltron as a safety net for god-rolls Aegis hasn't curated yet.",
-    enabledBuiltinIds: new Set(['voltron', 'aegis-exclusive']),
-  },
-  {
-    id: 'pve-everything-tagged',
-    label: 'PVE everything tagged',
-    description:
-      'Voltron + Choosy Voltron + Aegis Endgame. Broadest coverage; expect more notifications.',
-    enabledBuiltinIds: new Set(['voltron', 'choosy-voltron', 'aegis-endgame']),
-  },
-];
-
-// Built-in source IDs that ship Aegis-format tier metadata. Used by the soft
-// warning that fires when a tier filter is active but no tier-providing source
-// is enabled. Custom URLs that happen to be Aegis-format won't suppress this
-// warning — a small false positive, but the alternative (inspecting cached
-// entries for weaponTier presence) needs the wishlists key loaded which is
-// lazy in this context.
-const TIER_PROVIDING_BUILTIN_IDS = new Set(['aegis-endgame', 'aegis-exclusive']);
-
-function setsEqual(a: Set<string>, b: Set<string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const item of a) if (!b.has(item)) return false;
-  return true;
-}
-
-function detectActivePreset(sources: WishlistSource[]): WishlistPreset | 'custom' {
-  const enabledBuiltins = new Set(
-    sources.filter((s) => s.builtin && s.enabled).map((s) => s.id),
-  );
-  for (const preset of PRESETS) {
-    if (setsEqual(enabledBuiltins, preset.enabledBuiltinIds)) return preset;
-  }
-  return 'custom';
-}
-
-function applyPreset(preset: WishlistPreset, sources: WishlistSource[]): WishlistSource[] {
-  return sources.map((s) => {
-    if (!s.builtin) return s; // custom sources are independent of presets
-    return { ...s, enabled: preset.enabledBuiltinIds.has(s.id) };
-  });
-}
-
-function hasEnabledTierSource(sources: WishlistSource[]): boolean {
-  return sources.some((s) => s.enabled && TIER_PROVIDING_BUILTIN_IDS.has(s.id));
-}
-
-const TIER_OPTIONS: { value: TierFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
+const MIN_TIER_OPTIONS: { value: CharlesSourceConfig['minTier']; label: string }[] = [
   { value: 'S', label: 'S' },
   { value: 'A', label: 'A' },
   { value: 'B', label: 'B' },
@@ -99,21 +32,24 @@ const TIER_OPTIONS: { value: TierFilter; label: string }[] = [
   { value: 'F', label: 'F' },
 ];
 
-const ROLL_TYPE_OPTIONS: { value: RollTypeFilter; label: string }[] = [
-  { value: 'all-matched', label: 'All matched' },
-  { value: 'strong-pve', label: 'Strong PVE' },
-  { value: 'popular', label: 'Popular' },
+const PPC_OPTIONS: { value: CharlesSourceConfig['ppc']; label: string }[] = [
+  { value: 0, label: '0' },
+  { value: 1, label: '1' },
+  { value: 2, label: '2' },
+  { value: 3, label: '3' },
 ];
 
 export function WeaponsPanel() {
-  const [sources, setSources] = useState<WishlistSource[]>(() => loadWishlistSources());
+  const [charlesConfig, setCharlesConfig] = useState<CharlesSourceConfig>(() =>
+    loadCharlesSourceConfig(),
+  );
   const [filterConfig, setFilterConfig] = useState<WeaponFilterConfig>(() =>
     loadWeaponFilterConfig(),
   );
 
   useEffect(() => {
-    const unsub1 = onKeyChanged<WishlistSource[]>('wishlistSources', (v) => {
-      if (v) setSources(v);
+    const unsub1 = onKeyChanged<CharlesSourceConfig>('charlesSourceConfig', (v) => {
+      if (v) setCharlesConfig(v);
     });
     const unsub2 = onKeyChanged<WeaponFilterConfig>('weaponFilterConfig', (v) => {
       if (v) setFilterConfig(v);
@@ -124,78 +60,77 @@ export function WeaponsPanel() {
     };
   }, []);
 
-  const activePreset = useMemo(() => detectActivePreset(sources), [sources]);
+  // Persist Charles config and force a refetch of the Charles source. The
+  // SW's URL-from-config injection means refresh hits the new MR{tier}_PPC{n}
+  // file; no cache-key gymnastics needed here. Force=true skips the 24h
+  // staleness window so the swap takes effect immediately.
+  const updateCharlesConfig = useCallback((next: CharlesSourceConfig) => {
+    setCharlesConfig(next);
+    saveCharlesSourceConfig(next);
+    void requestRefreshOne(CHARLES_SOURCE_ID, true);
+  }, []);
 
-  const handlePresetChange = useCallback(
-    (presetId: string) => {
-      const preset = PRESETS.find((p) => p.id === presetId);
-      if (!preset) return;
-      const next = applyPreset(preset, sources);
-      setSources(next);
-      saveWishlistSources(next);
-      // Newly-enabled sources need a fetch; the per-source 24h staleness check
-      // inside refreshWishlists handles already-fresh sources cheaply.
-      void refreshWishlists(next).catch(() => {});
+  const updateFilterConfig = useCallback((next: WeaponFilterConfig) => {
+    setFilterConfig(next);
+    saveWeaponFilterConfig(next);
+  }, []);
+
+  const handleMinTierChange = useCallback(
+    (minTier: CharlesSourceConfig['minTier']) => {
+      updateCharlesConfig({ ...charlesConfig, minTier });
     },
-    [sources],
+    [charlesConfig, updateCharlesConfig],
   );
 
-  const handleTierChange = useCallback(
-    (tier: TierFilter) => {
-      const next = { ...filterConfig, tierFilter: tier };
-      setFilterConfig(next);
-      saveWeaponFilterConfig(next);
+  const handlePpcChange = useCallback(
+    (ppc: CharlesSourceConfig['ppc']) => {
+      updateCharlesConfig({ ...charlesConfig, ppc });
     },
-    [filterConfig],
+    [charlesConfig, updateCharlesConfig],
   );
 
-  const handleRollTypeChange = useCallback(
-    (rt: RollTypeFilter) => {
-      const next = { ...filterConfig, rollTypeFilter: rt };
-      setFilterConfig(next);
-      saveWeaponFilterConfig(next);
+  const handleVoltronToggle = useCallback(
+    (voltronConfirmation: boolean) => {
+      updateFilterConfig({ ...filterConfig, voltronConfirmation });
     },
-    [filterConfig],
+    [filterConfig, updateFilterConfig],
   );
 
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-5">
         <div className="space-y-1">
-          <h2 className="text-base font-semibold">What do you want to be notified about?</h2>
+          <h2 className="text-base font-semibold">Aegis weapon coverage</h2>
           <p className="text-sm text-text-muted">
-            Pick a preset to enable a starter set of wishlist sources, then tune the tier and
-            roll-type filters to control which matched drops fire notifications. Drop log shows
-            everything regardless of these filters.
+            Pick the tier threshold and how strict you want perk requirements. The
+            Charles wishlist swaps to the matching variant automatically; switching
+            tiers or perk strictness re-fetches the corresponding file (~15s the
+            first time for each combination).
           </p>
         </div>
 
-        <PresetPicker active={activePreset} onChange={handlePresetChange} />
+        <PillRadioGroup
+          label="Min Tier"
+          options={MIN_TIER_OPTIONS}
+          value={charlesConfig.minTier}
+          onChange={handleMinTierChange}
+          helper="Lower tiers include more weapons. F shows everything Aegis rated."
+        />
 
-        <div className="space-y-1.5">
-          <div className="text-xs uppercase tracking-wide text-text-muted">Tier filter</div>
-          <SegmentedControl
-            options={TIER_OPTIONS}
-            value={filterConfig.tierFilter}
-            onChange={handleTierChange}
-          />
-          <div className="text-xs text-text-muted">
-            Notify on weapons rated this tier or better. Only Aegis-format wishlists provide tier
-            data.
-          </div>
-        </div>
+        <PillRadioGroup
+          label="Perks Per Column"
+          options={PPC_OPTIONS}
+          value={charlesConfig.ppc}
+          onChange={handlePpcChange}
+          helper="How many flagged perks must roll to count as a match. 0 = any roll. 3 = strict god rolls only."
+        />
 
-        <div className="space-y-1.5">
-          <div className="text-xs uppercase tracking-wide text-text-muted">Roll-type filter</div>
-          <SegmentedControl
-            options={ROLL_TYPE_OPTIONS}
-            value={filterConfig.rollTypeFilter}
-            onChange={handleRollTypeChange}
-          />
-          <RollTypeDescription value={filterConfig.rollTypeFilter} />
-        </div>
-
-        <SoftWarnings sources={sources} filterConfig={filterConfig} />
+        <Checkbox
+          label="Show thumbs-up when Voltron also flags this roll"
+          checked={filterConfig.voltronConfirmation}
+          onChange={handleVoltronToggle}
+          helper="Voltron is a community-curated keeper list. When both Aegis and Voltron agree, the drop gets an extra confirmation indicator. (Visual treatment lands in a follow-up brief.)"
+        />
       </div>
 
       <div className="space-y-3">
@@ -204,7 +139,7 @@ export function WeaponsPanel() {
             Manage individual wishlist sources
           </h3>
           <p className="text-xs text-text-muted">
-            Most users won&apos;t need this. The presets above handle common cases.
+            Most users won&apos;t need this. The selector above handles common cases.
           </p>
         </div>
         <WishlistsPanel showHeader={false} />
@@ -213,115 +148,68 @@ export function WeaponsPanel() {
   );
 }
 
-function PresetPicker({
-  active,
-  onChange,
-}: {
-  active: WishlistPreset | 'custom';
-  onChange: (presetId: string) => void;
-}) {
-  const isCustom = active === 'custom';
-  return (
-    <div className="space-y-2">
-      <div className="text-xs uppercase tracking-wide text-text-muted">Wishlist preset</div>
-      <div className="flex flex-col gap-2">
-        {PRESETS.map((preset) => {
-          const isActive = !isCustom && active.id === preset.id;
-          return (
-            <button
-              key={preset.id}
-              onClick={() => onChange(preset.id)}
-              className={`text-left px-3 py-2 rounded border transition-colors ${
-                isActive
-                  ? 'bg-rahool-blue/15 border-rahool-blue/40'
-                  : 'border-bg-border hover:border-bg-border/80 bg-bg-primary/40'
-              }`}
-            >
-              <div
-                className={`text-sm font-medium ${isActive ? 'text-rahool-blue' : 'text-text-primary'}`}
-              >
-                {preset.label}
-              </div>
-              <div className="text-xs text-text-muted mt-0.5">{preset.description}</div>
-            </button>
-          );
-        })}
-        {isCustom && (
-          <div className="text-xs text-text-muted px-3 py-2 rounded border border-bg-border bg-bg-primary/40">
-            <span className="font-medium text-text-primary">Custom</span> — your enabled built-ins
-            don&apos;t match any preset. Pick one above to align, or keep your manual selection.
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SegmentedControl<T extends string>({
+function PillRadioGroup<T extends string | number>({
+  label,
   options,
   value,
   onChange,
+  helper,
 }: {
+  label: string;
   options: { value: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
+  helper?: string;
 }) {
   return (
-    <div className="flex flex-wrap gap-1">
-      {options.map((opt) => {
-        const active = opt.value === value;
-        return (
-          <button
-            key={opt.value}
-            onClick={() => onChange(opt.value)}
-            className={`text-xs px-3 py-1.5 rounded border ${
-              active
-                ? 'bg-rahool-blue/20 text-rahool-blue border-rahool-blue/40'
-                : 'border-bg-border text-text-muted hover:text-text-primary'
-            }`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
+    <div className="space-y-1.5">
+      <div className="text-xs uppercase tracking-wide text-text-muted">{label}</div>
+      <div className="flex flex-wrap gap-1">
+        {options.map((opt) => {
+          const active = opt.value === value;
+          return (
+            <button
+              key={String(opt.value)}
+              onClick={() => onChange(opt.value)}
+              className={`text-xs px-3 py-1.5 rounded border min-w-[2.5rem] ${
+                active
+                  ? 'bg-rahool-blue/20 text-rahool-blue border-rahool-blue/40'
+                  : 'border-bg-border text-text-muted hover:text-text-primary'
+              }`}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+      {helper && <div className="text-xs text-text-muted">{helper}</div>}
     </div>
   );
 }
 
-function RollTypeDescription({ value }: { value: RollTypeFilter }) {
-  const text =
-    value === 'all-matched'
-      ? 'Notify on any drop flagged by an enabled wishlist source.'
-      : value === 'strong-pve'
-        ? 'Notify only when at least one PVE-tagged source flags the drop.'
-        : 'Notify when 2+ enabled sources agree. Strong consensus signal.';
-  return <div className="text-xs text-text-muted">{text}</div>;
-}
-
-function SoftWarnings({
-  sources,
-  filterConfig,
+function Checkbox({
+  label,
+  checked,
+  onChange,
+  helper,
 }: {
-  sources: WishlistSource[];
-  filterConfig: WeaponFilterConfig;
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  helper?: string;
 }) {
-  const warnings: string[] = [];
-  if (filterConfig.tierFilter !== 'all' && !hasEnabledTierSource(sources)) {
-    warnings.push(
-      'Your tier filter requires Aegis-rated wishlists. Enable Aegis Endgame Analysis or Aegis Exclusive below to see tier-filtered notifications.',
-    );
-  }
-  if (warnings.length === 0) return null;
   return (
     <div className="space-y-1.5">
-      {warnings.map((w, i) => (
-        <div
-          key={i}
-          className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2"
-        >
-          {w}
-        </div>
-      ))}
+      <label className="flex items-start gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="mt-0.5 w-4 h-4 accent-rahool-blue cursor-pointer"
+        />
+        <span className="text-sm text-text-primary">{label}</span>
+      </label>
+      {helper && <div className="text-xs text-text-muted ml-6">{helper}</div>}
     </div>
   );
 }

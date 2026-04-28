@@ -5,9 +5,18 @@ import type {
   WishlistMatch,
 } from '@/shared/types';
 import type { ImportedWishList, WishListEntry } from '@/core/scoring/types';
-import { loadWishlistSources } from '@/core/storage/scoring-config';
+import {
+  loadWeaponFilterConfig,
+  loadWishlistSources,
+} from '@/core/storage/scoring-config';
+import { CHARLES_SOURCE_ID } from './known-sources';
 import { getAllCachedLists } from './cache';
 import { passesTierFilter } from './filters';
+
+// The "Voltron family" of source ids that participate in the Brief #19
+// confirmation logic. Both base Voltron and Choosy Voltron count — they
+// share an upstream curator and conceptually fill the same role.
+const VOLTRON_SOURCE_IDS: ReadonlySet<string> = new Set(['voltron', 'choosy-voltron']);
 
 // Tier ordering: index 0 is best (S), index 5 is worst (F). resolveBestTier
 // uses indexOf so a drop with matches at A and C resolves to A.
@@ -184,8 +193,27 @@ export function matchDropAgainstWishlists(
     }
   }
 
+  // Brief #19: Voltron-as-confirmation post-processing. When the user opts
+  // in via voltronConfirmation:
+  //   - If Charles matched the drop, mark Voltron-family matches with
+  //     confirmsCharles=true (data-only flag for Brief #20's UI).
+  //   - If Charles did NOT match (drop falls outside the user's tier scope),
+  //     drop the Voltron-family match entirely. Charles is primary; Voltron
+  //     decorates Charles. Without Charles, Voltron's signal isn't shown.
+  // When the toggle is off, Voltron behaves as an independent source — its
+  // matches stay in the result with no flag.
+  const voltronConfirmation = loadWeaponFilterConfig().voltronConfirmation;
+  const charlesMatched = keeperMatches.some((m) => m.sourceId === CHARLES_SOURCE_ID);
+  const finalMatches = voltronConfirmation
+    ? keeperMatches.flatMap((m) => {
+        if (!VOLTRON_SOURCE_IDS.has(m.sourceId)) return [m];
+        if (!charlesMatched) return []; // suppress
+        return [{ ...m, confirmsCharles: true }];
+      })
+    : keeperMatches;
+
   return {
-    keeperMatches,
+    keeperMatches: finalMatches,
     winner: firstKeeper ?? firstTrash,
   };
 }

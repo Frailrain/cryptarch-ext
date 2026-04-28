@@ -48,11 +48,15 @@ export interface WishlistMetadata {
 //
 // pveOriented / pvpOriented (Brief #12): orientation tags used by the roll-type
 // filter on the Weapons tab. A source can be both, neither, or one. Built-ins
-// flagged in known-sources.ts. Custom URLs default to neither — TODO future
-// brief: surface a checkbox in the custom-source-edit UI so users can self-tag.
-// pvpOriented currently has no UI consumer (no Strong PVP filter ships in #12,
-// no acceptable PVP source exists), but the field stays so a future PVP source
-// + filter doesn't need a schema migration.
+// flagged in known-sources.ts. Custom URLs default to neither.
+//
+// configurable (Brief #19): the source's URL is computed from a config blob
+// rather than statically declared. The runtime `url` field is recomputed at
+// load time from the current config (see loadWishlistSources). Today only the
+// Charles MRF_PPC source uses this — its URL switches with the user's
+// minTier/ppc selector. The configurable flag stays serialized so the runtime
+// shape can pass through storage unchanged; computeUrl + defaultConfig live
+// in known-sources.ts metadata, not on the runtime source.
 export interface WishlistSource {
   id: string;
   name: string;
@@ -62,28 +66,63 @@ export interface WishlistSource {
   description?: string;
   pveOriented?: boolean;
   pvpOriented?: boolean;
+  configurable?: boolean;
 }
 
-// Brief #12: top-level filter config exposed on the Weapons tab. Two
-// independent dimensions: tier (minimum quality threshold to notify on) and
-// roll-type (which kind of match counts).
+// Brief #19: Charles MRF_PPC selector config. Persists to its own
+// charlesSourceConfig storage key (not folded into wishlistSources or
+// WeaponFilterConfig — keeping concerns separate). minTier maps to
+// MR{S|A|B|C|D|F}; ppc maps to PPC{0|1|2|3}. The combinatorial product
+// gives 28 possible URL targets in Charles's repo; computeCharlesUrl in
+// known-sources.ts derives the URL from this config.
+export interface CharlesSourceConfig {
+  minTier: 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
+  ppc: 0 | 1 | 2 | 3;
+}
+
+export const DEFAULT_CHARLES_CONFIG: CharlesSourceConfig = {
+  // F = full S-F coverage. Most permissive default; Charles's site recommends
+  // starting here and letting users tighten via the selector.
+  minTier: 'F',
+  ppc: 0,
+};
+
+// Brief #12: TierFilter retained for the migration adapter only.
+// Pre-Brief #19 WeaponFilterConfig stored a tierFilter that we now read once
+// to seed CharlesSourceConfig.minTier on first load after the upgrade. New
+// code shouldn't reference this — read charlesSourceConfig.minTier instead.
 export type TierFilter = 'all' | TierLetter;
 
-// Roll-type filter options. PVP option deliberately absent — no acceptable
-// active PVP wishlist source exists as of Brief #12; see known-sources.ts.
+// Brief #12 RollTypeFilter retained for the migration adapter only. Brief
+// #19 replaces roll-type with PerksPerColumn (PPC) on Charles's selector;
+// Voltron transitions to confirmation signal. Old field is read once on
+// load and otherwise ignored.
 export type RollTypeFilter = 'all-matched' | 'strong-pve' | 'popular';
 
+// Brief #19: WeaponFilterConfig now holds only the Voltron-confirmation
+// toggle. Tier + roll-type were replaced by Charles's two-axis selector
+// (charlesSourceConfig.minTier / .ppc) — the URL itself filters by tier,
+// so the post-fetch tier check became redundant. The legacy fields (still
+// in WeaponFilterConfigLegacy) are read once by the migration adapter.
 export interface WeaponFilterConfig {
-  tierFilter: TierFilter;
-  rollTypeFilter: RollTypeFilter;
+  // When true, Voltron matches that overlap with a Charles match are flagged
+  // confirmsCharles=true (data-only marker for Brief #20's UI). When false,
+  // Voltron behaves as a normal independent source.
+  voltronConfirmation: boolean;
 }
 
 export const DEFAULT_WEAPON_FILTER: WeaponFilterConfig = {
-  // 'A' as the minimum threshold means notify on S or A tier — sensible
-  // default for users who enable Aegis sources without further configuration.
-  tierFilter: 'A',
-  rollTypeFilter: 'all-matched',
+  voltronConfirmation: true,
 };
+
+// Pre-Brief #19 stored shape, used by the migration adapter in
+// scoring-config.ts to seed the new Charles config + WeaponFilterConfig
+// without losing user state.
+export interface WeaponFilterConfigLegacy {
+  tierFilter?: TierFilter;
+  rollTypeFilter?: RollTypeFilter;
+  voltronConfirmation?: boolean;
+}
 
 // One match between a drop and a wishlist source. A drop may have zero, one,
 // or many of these. weaponTier (Brief #12) is per-source because each source
@@ -103,6 +142,12 @@ export interface WishlistMatch {
   // pre-#14 matches; renderers must guard with optional chaining and treat
   // missing as "no annotation available, render all perks at full opacity."
   taggedPerkHashes?: number[];
+  // Brief #19: data-only marker set by the matcher when (a) voltronConfirmation
+  // is on AND (b) a Charles source matched the same drop AND (c) this match's
+  // sourceId is voltron. UI in Brief #20 reads this to swap the source tag for
+  // a "thumbs-up" decoration on the Charles tag instead of rendering as a
+  // standalone source. Absent (or false) means render normally.
+  confirmsCharles?: boolean;
 }
 
 export interface DropFeedEntry {

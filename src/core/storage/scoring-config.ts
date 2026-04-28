@@ -4,10 +4,18 @@ import {
   type ScoringConfig,
 } from '@/core/scoring/types';
 import { getItem, setItem } from '@/adapters/storage';
-import { BUILTIN_WISHLIST_SOURCES } from '@/core/wishlists/known-sources';
 import {
+  BUILTIN_WISHLIST_SOURCES,
+  CHARLES_SOURCE_ID,
+  computeCharlesUrl,
+} from '@/core/wishlists/known-sources';
+import {
+  DEFAULT_CHARLES_CONFIG,
   DEFAULT_WEAPON_FILTER,
+  type CharlesSourceConfig,
+  type TierLetter,
   type WeaponFilterConfig,
+  type WeaponFilterConfigLegacy,
   type WishlistMetadata,
   type WishlistSource,
 } from '@/shared/types';
@@ -17,6 +25,7 @@ const WISHLISTS_KEY = 'wishlists';
 const WISHLIST_METADATA_KEY = 'wishlistMetadata';
 const WISHLIST_SOURCES_KEY = 'wishlistSources';
 const WEAPON_FILTER_KEY = 'weaponFilterConfig';
+const CHARLES_CONFIG_KEY = 'charlesSourceConfig';
 
 // armorRules lives in its own storage key so the scoring-config blob stays
 // small. Brief #11 Part D removed the corresponding `wishlists` field from
@@ -114,23 +123,83 @@ export function loadWishlistSources(): WishlistSource[] {
       result.push({ ...b });
     }
   }
-  return result;
+  // Brief #19: configurable sources (currently only Charles) get their URL
+  // recomputed from the live config blob. Keeps fetch.ts URL-agnostic — it
+  // always reads source.url, never knows whether the source is configurable.
+  const charlesConfig = loadCharlesSourceConfig();
+  return result.map((s) => {
+    if (s.id === CHARLES_SOURCE_ID && s.configurable) {
+      return { ...s, url: computeCharlesUrl(charlesConfig) };
+    }
+    return s;
+  });
 }
 
 export function saveWishlistSources(sources: WishlistSource[]): void {
   setItem<WishlistSource[]>(WISHLIST_SOURCES_KEY, sources);
 }
 
-// Brief #12: Weapons-tab filter config (tier threshold + roll-type mode).
-// Independent of wishlistSources so toggling sources doesn't churn this key.
+// Brief #19: WeaponFilterConfig now holds only voltronConfirmation. The
+// pre-#19 tier/roll-type fields move to charlesSourceConfig. Read-time
+// adapter accepts the legacy shape and merges sane defaults; the migrated
+// view is returned to callers but NOT written back here — callers (or a
+// future settings save) get the persisted upgrade for free on next save.
 export function loadWeaponFilterConfig(): WeaponFilterConfig {
-  const stored = getItem<WeaponFilterConfig>(WEAPON_FILTER_KEY);
+  const stored = getItem<WeaponFilterConfigLegacy>(WEAPON_FILTER_KEY);
   if (!stored) return { ...DEFAULT_WEAPON_FILTER };
-  // Merge with defaults so a partial stored config (after future field
-  // additions in subsequent briefs) still returns a complete object.
-  return { ...DEFAULT_WEAPON_FILTER, ...stored };
+  return {
+    ...DEFAULT_WEAPON_FILTER,
+    voltronConfirmation:
+      stored.voltronConfirmation ?? DEFAULT_WEAPON_FILTER.voltronConfirmation,
+  };
 }
 
 export function saveWeaponFilterConfig(config: WeaponFilterConfig): void {
   setItem<WeaponFilterConfig>(WEAPON_FILTER_KEY, config);
+}
+
+// Brief #19: Charles selector config. Stored under its own key so
+// independent components (Weapons tab UI, fetch URL injection, matcher
+// tier scoping) all read the same source of truth without touching
+// WeaponFilterConfig or wishlistSources. Migration: if charlesSourceConfig
+// is missing but legacy WeaponFilterConfig exists, derive minTier from
+// the old tierFilter ('S'/'A' map directly; everything else → 'F' for
+// most-permissive coverage). PPC defaults to 0 (any roll), preserving
+// the pre-#19 notification volume since the old roll-type filter didn't
+// gate on perk strictness.
+export function loadCharlesSourceConfig(): CharlesSourceConfig {
+  const stored = getItem<CharlesSourceConfig>(CHARLES_CONFIG_KEY);
+  if (stored) {
+    return {
+      minTier: stored.minTier ?? DEFAULT_CHARLES_CONFIG.minTier,
+      ppc: stored.ppc ?? DEFAULT_CHARLES_CONFIG.ppc,
+    };
+  }
+  // No new-format config yet — migrate from legacy WeaponFilterConfig if
+  // present. Returns the migrated view; no persistence (the next explicit
+  // saveCharlesSourceConfig call writes the upgraded form).
+  const legacy = getItem<WeaponFilterConfigLegacy>(WEAPON_FILTER_KEY);
+  if (!legacy) return { ...DEFAULT_CHARLES_CONFIG };
+  return {
+    minTier: legacyTierToCharlesMinTier(legacy.tierFilter),
+    ppc: 0,
+  };
+}
+
+export function saveCharlesSourceConfig(config: CharlesSourceConfig): void {
+  setItem<CharlesSourceConfig>(CHARLES_CONFIG_KEY, config);
+}
+
+function legacyTierToCharlesMinTier(
+  tier: string | undefined,
+): CharlesSourceConfig['minTier'] {
+  // Direct mapping for tier letters Charles supports; 'all' and missing
+  // both default to F (most permissive — matches DEFAULT_CHARLES_CONFIG and
+  // preserves the notification surface area for users who hadn't tightened
+  // the pre-#19 tier filter).
+  const direct: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
+  if (tier && (direct as string[]).includes(tier)) {
+    return tier as CharlesSourceConfig['minTier'];
+  }
+  return DEFAULT_CHARLES_CONFIG.minTier;
 }

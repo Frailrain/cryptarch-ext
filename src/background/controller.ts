@@ -29,14 +29,12 @@ import {
 import { scoreItem } from '@/core/scoring/engine';
 import { loadArmorRules } from '@/core/rules/armor-rules';
 import {
+  loadCharlesSourceConfig,
   loadScoringConfig,
-  loadWeaponFilterConfig,
-  loadWishlistSources,
 } from '@/core/storage/scoring-config';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { collectWeaponGodrolls, resolveBestTier } from '@/core/wishlists/matcher';
 import { getCachedPerkPool } from '@/core/bungie/perk-pool-cache';
-import { passesRollTypeFilter, passesTierFilter } from '@/core/wishlists/filters';
 import {
   appendToFeed,
   getFeedEntry,
@@ -351,16 +349,17 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
         p.unlockedPlugHashes ?? [p.plugHash]
       ).map(canon);
     }
-    // Brief #14.5: capture the full set of godroll perks across enabled
+    // Brief #14.5 + #19: capture the full set of godroll perks across enabled
     // wishlists for this weapon. Display layer gold-borders any of these
     // even when the user didn't roll them — surfaces "what else would have
-    // been good" in the expanded view. Filtered by the user's
-    // WeaponFilterConfig tier threshold so exhaustive sources like Voltron
-    // don't flood low-tier weapons with gold borders for every passable roll.
-    const filterConfigForGodrolls = loadWeaponFilterConfig();
+    // been good" in the expanded view. Filter by the user's Charles minTier
+    // so exhaustive sources like Voltron don't flood low-tier weapons with
+    // gold borders. (Charles itself is URL-pre-filtered to that tier; this
+    // applies the same gate to other enabled wishlists.)
+    const charlesConfigForGodrolls = loadCharlesSourceConfig();
     const weaponGodrollHashes = collectWeaponGodrolls(
       drop.itemHash,
-      filterConfigForGodrolls.tierFilter,
+      charlesConfigForGodrolls.minTier,
     ).map(canon);
     // Canonicalize taggedPerkHashes the same way. Wishlist sources mostly use
     // base hashes already, but a source listing an enhanced perk would get
@@ -454,18 +453,14 @@ function maybeNotify(entry: DropFeedEntry, locked: boolean): void {
     );
     message = bits.length > 0 ? bits.join(' / ') : 'Rule match';
   } else if (entry.itemType === 'weapon') {
-    // Brief #12 Part H: weapon notifications gate on the user's WeaponFilterConfig
-    // (set on the Weapons tab) instead of the legacy grade threshold. Sequence:
-    //   1. Must have at least one wishlist match (no notify on unmatched weapons)
-    //   2. Must pass the roll-type filter (all-matched / strong-pve / popular)
-    //   3. Must pass the tier filter (untiered drops fail closed when the
-    //      threshold is anything but 'all' — see passesTierFilter docblock)
+    // Brief #19: tier + roll-type filters retired. Charles's URL is
+    // pre-filtered to the user's selected minTier/ppc, and the matcher
+    // suppresses Voltron-only matches when Charles didn't match (with
+    // voltronConfirmation on). So the surviving wishlistMatches array
+    // is already gated to "this drop is worth notifying about" — fire
+    // on any non-empty match set.
     const matches = entry.wishlistMatches ?? [];
     if (matches.length === 0) return;
-    const filterConfig = loadWeaponFilterConfig();
-    const sources = loadWishlistSources();
-    if (!passesRollTypeFilter(matches, filterConfig.rollTypeFilter, sources)) return;
-    if (!passesTierFilter(entry.weaponTier, filterConfig.tierFilter)) return;
 
     const tierPrefix = entry.weaponTier ? `[Tier ${entry.weaponTier}] ` : '';
     title = `${tierPrefix}${entry.itemName}`;

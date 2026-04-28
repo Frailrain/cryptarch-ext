@@ -44,8 +44,8 @@ import { runPollCycle } from '@/core/bungie/inventory';
 import { loadPrimaryMembership } from '@/core/storage/tokens';
 import { loadArmorRules } from '@/core/rules/armor-rules';
 import {
+  loadCharlesSourceConfig,
   loadScoringConfig,
-  loadWeaponFilterConfig,
   loadWishlistSources,
 } from '@/core/storage/scoring-config';
 import { scoreItem } from '@/core/scoring/engine';
@@ -587,7 +587,7 @@ async function tryRealInventoryMultiSource(): Promise<{
   }
   const weaponGodrollHashes = collectWeaponGodrolls(
     drop.itemHash,
-    loadWeaponFilterConfig().tierFilter,
+    loadCharlesSourceConfig().minTier,
   ).map(canon);
   const canonicalizedMatches = matches.map((m) =>
     m.taggedPerkHashes

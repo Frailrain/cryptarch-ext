@@ -23,6 +23,11 @@ const DASHBOARD_STORAGE_KEYS = [
   'armor-rules',
   'wishlistSources',
   'wishlistMetadata',
+  // Brief #19: WeaponsPanel reads both for the Charles selector + Voltron
+  // confirmation toggle, plus the legacy weaponFilterConfig key for the
+  // migration adapter that derives initial Charles config from old tierFilter.
+  'weaponFilterConfig',
+  'charlesSourceConfig',
 ];
 
 async function bootstrap() {
