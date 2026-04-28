@@ -14,11 +14,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 const DEFAULT_DELAY_MS = 150;
-// Approximate tooltip height after wrapping. Bigger than it sounds because
-// long perk descriptions (and the new max-width wrap) can produce 3-4 lines.
-// Used at hover-time to decide whether to render above or below — when the
-// icon is too close to the viewport top (popup top row, etc.) we flip below.
-const ESTIMATED_TOOLTIP_HEIGHT = 90;
+// Approximate tooltip height after wrapping. Multi-line tooltips run 30-60px
+// at the 240px max-width; the popup's drop rows start ~100px below the popup
+// top after the header + filter chips, so a generous 120px threshold flips
+// any icon in the popup's top region to render below instead of above.
+const ESTIMATED_TOOLTIP_HEIGHT = 120;
 // Inline cap on tooltip width. Long perk descriptions (e.g. "Activating your
 // grenade ability reloads this weapon from reserves") would otherwise extend
 // past viewport edges with whitespace-nowrap. Wraps to multi-line at this
@@ -125,9 +125,15 @@ export function PerkTooltip({
             // Center on the icon, then nudge horizontally if measurement
             // showed the natural position would push past a viewport edge.
             transform: `translateX(calc(-50% + ${horizontalNudge}px))`,
+            // width: max-content tells the browser "size to the content's
+            // unwrapped natural width" — required because the absolute
+            // positioning context is the icon-sized wrapper. Without this,
+            // shrink-to-fit clamps the tooltip to ~22px and we get one
+            // character per line. max-width then caps it for long
+            // descriptions; whitespace + wordBreak allow the wrap inside
+            // the cap.
+            width: 'max-content',
             maxWidth: TOOLTIP_MAX_WIDTH_PX,
-            // Allow wrap to multi-line for long perk descriptions instead of
-            // extending past the viewport edge with whitespace-nowrap.
             whiteSpace: 'normal',
             wordBreak: 'break-word',
           }}
