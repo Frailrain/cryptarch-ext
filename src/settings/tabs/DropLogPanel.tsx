@@ -363,9 +363,13 @@ function DropLogRow({
 }) {
   const isArmor = entry.itemType === 'armor';
   const isMatchedArmor = isArmor && entry.armorMatched === true;
-  // Brief #12.5 Part C: was `entry.grade === 'S'`. Grade S meant "any wishlist
-  // flagged this roll as a keeper" — same semantics as wishlistMatches.length>0.
-  const isKeeperWeapon = !isArmor && (entry.wishlistMatches?.length ?? 0) > 0;
+  // Brief #21: row-tint "keeper" status counts only non-notification-only
+  // matches. A custom GitHub URL match shouldn't tint the row to look like
+  // curator-quality even when it fires a notification.
+  const visibleWishlistMatches = (entry.wishlistMatches ?? []).filter(
+    (m) => m.notificationOnly !== true,
+  );
+  const isKeeperWeapon = !isArmor && visibleWishlistMatches.length > 0;
   // Row bg encodes "worth your attention" — green for matched exotic armor,
   // lavender for non-exotic keepers (matched armor + S-tier weapons). Exotic
   // weapons and unmatched exotic armor get no tint; the yellow Ex chip
@@ -379,9 +383,12 @@ function DropLogRow({
       : 'hover:bg-bg-border/40';
 
   const subtitle = isArmor ? buildArmorSubtitle(entry) : entry.weaponType ?? 'Weapon';
+  // Brief #21: lock relevance follows visual matches, not notification-only.
+  // Notification-only sources fire alerts but shouldn't surface the lock
+  // affordance — that's a curator-quality signal.
   const lockRelevant =
     (isArmor && entry.armorMatched === true) ||
-    (entry.wishlistMatches?.length ?? 0) > 0;
+    visibleWishlistMatches.length > 0;
 
   // Brief #14 Part E: rows with a known itemHash are clickable to expand
   // the perk-pool detail view. Pre-#14 entries (no itemHash) and ghost
@@ -393,14 +400,9 @@ function DropLogRow({
   // Honoring the live toggle means flipping it back to off restores the
   // parallel-source rendering even on entries captured while it was on.
   const voltronConfirmed =
-    voltronConfirmation && voltronConfirmedFromMatches(entry.wishlistMatches);
-  // Source-tag display split: when confirmed, separate the primary
-  // (Charles) tag from the Voltron-family confirmations and render Voltron
-  // as a lower-weight annotation. When not confirmed (toggle off, or no
-  // Voltron match), every match renders as a parallel chip.
-  const visibleMatches = entry.wishlistMatches ?? [];
-  const charlesMatch = visibleMatches.find((m) => m.sourceId === CHARLES_SOURCE_ID);
-  const otherMatches = visibleMatches.filter((m) => m.sourceId !== CHARLES_SOURCE_ID);
+    voltronConfirmation && voltronConfirmedFromMatches(visibleWishlistMatches);
+  const charlesMatch = visibleWishlistMatches.find((m) => m.sourceId === CHARLES_SOURCE_ID);
+  const otherMatches = visibleWishlistMatches.filter((m) => m.sourceId !== CHARLES_SOURCE_ID);
   const reorderedTags = voltronConfirmed && charlesMatch;
 
   return (
@@ -435,7 +437,7 @@ function DropLogRow({
             confirmed" annotation. Otherwise render every match as parallel
             chips (preserves the toggle-off path and non-Voltron secondary
             sources like Aegis Endgame). */}
-        {visibleMatches.length > 0 && (
+        {visibleWishlistMatches.length > 0 && (
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             {reorderedTags && charlesMatch ? (
               <>
@@ -464,7 +466,7 @@ function DropLogRow({
                 </span>
               </>
             ) : (
-              visibleMatches.map((m) => (
+              visibleWishlistMatches.map((m) => (
                 <span
                   key={m.sourceId}
                   title={m.notes || m.sourceName}

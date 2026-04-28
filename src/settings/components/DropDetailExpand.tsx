@@ -126,8 +126,13 @@ export function DropDetailExpand({ entry }: { entry: DropFeedEntry }) {
           primary wishlist matches at full weight, then a subtle "Voltron
           community keepers also flagged this roll" annotation. Otherwise
           all matches dedupe into the original combined section. */}
+      {/* Brief #21: notification-only matches (custom URLs) never render
+          in the wishlist note section — they're alert signals, not curator
+          quality. Filtered here before any visual logic considers them. */}
       <WishlistNoteSection
-        matches={entry.wishlistMatches ?? []}
+        matches={(entry.wishlistMatches ?? []).filter(
+          (m) => m.notificationOnly !== true,
+        )}
         voltronConfirmation={voltronConfirmation}
       />
 

@@ -63,24 +63,30 @@ export const BUILTIN_WISHLIST_SOURCES: WishlistSource[] = [
     pvpOriented: false,
   },
   {
+    // Brief #21: deprecated. Charles MRF_PPC source supersedes both legacy
+    // Aegis variants with full S-F coverage and selector-driven strictness.
+    // Kept in BUILTIN_WISHLIST_SOURCES so the loader knows the id is a
+    // built-in (not a custom URL) and doesn't accidentally surface it as a
+    // user-removable custom source. Default disabled and not user-toggleable.
     id: 'aegis-endgame',
     name: 'Aegis Endgame Analysis',
     url: 'https://raw.githubusercontent.com/Ciceron14/dim-extra-wishlists/main/Aegis%20Spreadsheets%20Wishlists/Aegis%20Endgame%20Analysis/dim_aegis_endgame.txt',
-    enabled: true,
+    enabled: false,
     builtin: true,
     description:
-      "Endgame-focused rolls from Aegis's spreadsheets. More selective than Voltron.",
+      "Deprecated. Superseded by Charles's tiered source.",
     pveOriented: true,
     pvpOriented: false,
   },
   {
+    // Brief #21: deprecated alongside Aegis Endgame. See note above.
     id: 'aegis-exclusive',
     name: 'Aegis Exclusive',
     url: 'https://raw.githubusercontent.com/Ciceron14/dim-extra-wishlists/main/Aegis%20Spreadsheets%20Wishlists/Aegis%20Endgame%20Analysis/dim_aegis_endgame-exclusive.txt',
-    enabled: true,
+    enabled: false,
     builtin: true,
     description:
-      'The most selective subset of Aegis Endgame — ~3.1k rolls vs ~9k in the main list. For users who want the strictest filtering.',
+      "Deprecated. Superseded by Charles's tiered source.",
     pveOriented: true,
     pvpOriented: false,
   },

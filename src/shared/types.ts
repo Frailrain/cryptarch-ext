@@ -57,6 +57,12 @@ export interface WishlistMetadata {
 // minTier/ppc selector. The configurable flag stays serialized so the runtime
 // shape can pass through storage unchanged; computeUrl + defaultConfig live
 // in known-sources.ts metadata, not on the runtime source.
+//
+// notificationOnly (Brief #21): when true, matches from this source fire
+// notifications but produce no Drop Log visual decoration (no tier chip
+// influence, no source tag, no gold-border contribution). User-added custom
+// URLs default to true — they're useful as private alert signals but
+// shouldn't masquerade as curated quality. Built-ins default to false.
 export interface WishlistSource {
   id: string;
   name: string;
@@ -67,6 +73,7 @@ export interface WishlistSource {
   pveOriented?: boolean;
   pvpOriented?: boolean;
   configurable?: boolean;
+  notificationOnly?: boolean;
 }
 
 // Brief #19: Charles MRF_PPC selector config. Persists to its own
@@ -148,6 +155,12 @@ export interface WishlistMatch {
   // a "thumbs-up" decoration on the Charles tag instead of rendering as a
   // standalone source. Absent (or false) means render normally.
   confirmsCharles?: boolean;
+  // Brief #21: mirrors the source's notificationOnly flag at match time.
+  // Matches stay in entry.wishlistMatches (the notification path consumes
+  // them), but renderers filter on this flag before computing tier chips,
+  // source tags, gold borders, and godroll union. Custom-URL sources
+  // default notification-only; built-ins default off.
+  notificationOnly?: boolean;
 }
 
 export interface DropFeedEntry {

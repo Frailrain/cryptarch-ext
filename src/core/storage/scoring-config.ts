@@ -98,26 +98,26 @@ export function loadWishlistSources(): WishlistSource[] {
   if (!stored || stored.length === 0) {
     return BUILTIN_WISHLIST_SOURCES.map((s) => ({ ...s }));
   }
-  // Merge built-in metadata into stored entries by id so post-Brief #11
-  // additions (description tweaks, the pveOriented/pvpOriented flags) reach
-  // upgraded users without requiring a one-shot migration. User-controlled
-  // fields (enabled) win; static fields (URL, description, orientation)
-  // come from the latest builtins. Custom sources pass through unchanged.
+  // Brief #21: built-in source state is no longer user-toggleable. Charles
+  // is always on; Voltron + Choosy Voltron always on (Weapons tab toggle
+  // gates whether they contribute to scoring); deprecated Aegis sources
+  // always off. Loader takes the built-in's declared `enabled` verbatim
+  // and discards any user-toggled state from storage. Custom sources keep
+  // their user-set enabled and acquire notificationOnly=true on first read
+  // (defaults to true for custom URLs added pre-#21).
   const builtinById = new Map(BUILTIN_WISHLIST_SOURCES.map((b) => [b.id, b]));
   const storedIds = new Set(stored.map((s) => s.id));
-  const result = stored.map((s) => {
+  const result: WishlistSource[] = stored.map((s) => {
     const builtin = builtinById.get(s.id);
-    if (!builtin) return s;
-    return {
-      ...builtin,
-      enabled: s.enabled,
-    };
+    if (!builtin) {
+      // Custom source — preserve user state, default notificationOnly=true.
+      return { ...s, notificationOnly: s.notificationOnly ?? true };
+    }
+    return { ...builtin };
   });
   // Brief #18: append any built-in id missing from stored. Picks up new
-  // sources shipped after the user's first install (e.g. the Charles MRF_PPC0
-  // tier-coverage source added in v0.3.x) without requiring storage clear.
-  // New built-ins arrive with their declared `enabled` default; the user can
-  // toggle later from the Weapons tab.
+  // sources shipped after the user's first install without requiring storage
+  // clear. New built-ins arrive with their declared `enabled` default.
   for (const b of BUILTIN_WISHLIST_SOURCES) {
     if (!storedIds.has(b.id)) {
       result.push({ ...b });

@@ -98,6 +98,18 @@ export function WeaponsPanel() {
 
   return (
     <div className="space-y-6">
+      {/* Brief #21: top-of-tab header. Cryptarch's appraiser uses Charles's
+          Aegis tier export as primary; Voltron community keepers serve as
+          confirmation when the toggle below is on. The selector controls
+          which Charles file is active (tier coverage + perk strictness). */}
+      <header className="space-y-1 px-1">
+        <h2 className="text-lg font-semibold text-text-primary">Notification Settings</h2>
+        <p className="text-sm text-text-muted">
+          Configure which drops trigger notifications. Cryptarch alerts you when a
+          drop matches your tier and perk criteria below.
+        </p>
+      </header>
+
       <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-5">
         <div className="space-y-1">
           <h2 className="text-base font-semibold">Aegis weapon coverage</h2>
@@ -133,17 +145,12 @@ export function WeaponsPanel() {
         />
       </div>
 
-      <div className="space-y-3">
-        <div className="px-1 space-y-0.5">
-          <h3 className="text-sm font-medium text-text-primary">
-            Manage individual wishlist sources
-          </h3>
-          <p className="text-xs text-text-muted">
-            Most users won&apos;t need this. The selector above handles common cases.
-          </p>
-        </div>
-        <WishlistsPanel showHeader={false} />
-      </div>
+      {/* Brief #21: WishlistsPanel renders with its own header (Custom
+          GitHub repositories) and explanatory text. Built-in source toggles
+          are gone — Charles is always primary, Voltron + Choosy Voltron are
+          gated by the confirmation toggle above, deprecated Aegis sources
+          stay disabled. */}
+      <WishlistsPanel />
     </div>
   );
 }

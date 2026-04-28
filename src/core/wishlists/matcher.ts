@@ -53,13 +53,24 @@ const TIER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
 export function collectWeaponGodrolls(
   weaponItemHash: number,
   tierFilter: TierFilter = 'all',
+  // Brief #21: when true, restrict the union to Charles's source only.
+  // The Weapons tab's voltronConfirmation toggle drives this — Charles is
+  // primary in confirmation mode, so secondary sources don't influence the
+  // gold-border decoration even when they're enabled. When false, every
+  // enabled non-notification-only source contributes (Voltron, Choosy
+  // Voltron, deprecated Aegis if power-user re-enabled).
+  charlesOnly = false,
 ): number[] {
-  const enabledIds = new Set(
-    loadWishlistSources()
-      .filter((s) => s.enabled)
+  const sources = loadWishlistSources();
+  // notificationOnly sources never contribute regardless of mode — those
+  // alerts are intentional dark-data signals, not curator quality.
+  const eligibleIds = new Set(
+    sources
+      .filter((s) => s.enabled && !s.notificationOnly)
+      .filter((s) => !charlesOnly || s.id === CHARLES_SOURCE_ID)
       .map((s) => s.id),
   );
-  const lists = getAllCachedLists().filter((list) => enabledIds.has(list.id));
+  const lists = getAllCachedLists().filter((list) => eligibleIds.has(list.id));
   const godrolls = new Set<number>();
   for (const list of lists) {
     for (const entry of list.entries) {
@@ -138,10 +149,13 @@ export function matchDropAgainstWishlists(
   // means a re-enable doesn't force an immediate re-fetch (the staleness check
   // in fetch.ts handles that). But scoring must respect the live enable flag,
   // so a disabled source's cached entries are excluded here.
-  const enabledIds = new Set(
-    loadWishlistSources()
-      .filter((s) => s.enabled)
-      .map((s) => s.id),
+  // Brief #21: snapshot sources here so we can stamp each WishlistMatch with
+  // its source's notificationOnly flag — needed by renderer-side filtering
+  // and the notification path's "any non-NO source matched?" check.
+  const sources = loadWishlistSources();
+  const enabledIds = new Set(sources.filter((s) => s.enabled).map((s) => s.id));
+  const notificationOnlyIds = new Set(
+    sources.filter((s) => s.notificationOnly === true).map((s) => s.id),
   );
   const lists = getAllCachedLists().filter((list) => enabledIds.has(list.id));
   if (lists.length === 0) {
@@ -182,6 +196,7 @@ export function matchDropAgainstWishlists(
         notes: perListResult.keeper.notes ? perListResult.keeper.notes : undefined,
         weaponTier: perListResult.keeper.weaponTier,
         taggedPerkHashes,
+        notificationOnly: notificationOnlyIds.has(list.id) ? true : undefined,
       });
       if (!firstKeeper) {
         firstKeeper = { entry: perListResult.keeper, sourceName: list.name };

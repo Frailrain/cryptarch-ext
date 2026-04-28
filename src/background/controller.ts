@@ -31,6 +31,7 @@ import { loadArmorRules } from '@/core/rules/armor-rules';
 import {
   loadCharlesSourceConfig,
   loadScoringConfig,
+  loadWeaponFilterConfig,
 } from '@/core/storage/scoring-config';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { collectWeaponGodrolls, resolveBestTier } from '@/core/wishlists/matcher';
@@ -367,17 +368,19 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
         p.unlockedPlugHashes ?? [p.plugHash]
       ).map(canon);
     }
-    // Brief #14.5 + #19: capture the full set of godroll perks across enabled
-    // wishlists for this weapon. Display layer gold-borders any of these
-    // even when the user didn't roll them — surfaces "what else would have
-    // been good" in the expanded view. Filter by the user's Charles minTier
-    // so exhaustive sources like Voltron don't flood low-tier weapons with
-    // gold borders. (Charles itself is URL-pre-filtered to that tier; this
-    // applies the same gate to other enabled wishlists.)
+    // Brief #14.5 + #19 + #21: capture the godroll-perk union for this
+    // weapon. Display layer gold-borders any of these. Filter by Charles
+    // minTier so exhaustive secondary sources don't flood low-tier weapons.
+    // Brief #21: also restrict to Charles-only when voltronConfirmation is
+    // on — the principle is "Charles is the appraiser; Voltron decorates."
+    // Custom notification-only sources are always excluded inside
+    // collectWeaponGodrolls.
     const charlesConfigForGodrolls = loadCharlesSourceConfig();
+    const filterConfigForGodrolls = loadWeaponFilterConfig();
     const weaponGodrollHashes = collectWeaponGodrolls(
       drop.itemHash,
       charlesConfigForGodrolls.minTier,
+      filterConfigForGodrolls.voltronConfirmation,
     ).map(canon);
     // Canonicalize taggedPerkHashes the same way. Wishlist sources mostly use
     // base hashes already, but a source listing an enhanced perk would get
@@ -471,42 +474,58 @@ function maybeNotify(entry: DropFeedEntry, locked: boolean): void {
     );
     message = bits.length > 0 ? bits.join(' / ') : 'Rule match';
   } else if (entry.itemType === 'weapon') {
-    // Brief #20: notification copy reflects Charles-as-primary mental model.
-    // Three branches:
-    //   - Charles matched → "<Tier>-Tier <Weapon>", body = trimmed Charles
-    //     note + "· Voltron confirmed" suffix when any voltron-family
-    //     match flagged confirmsCharles.
-    //   - Voltron-family only (toggle off, Charles disabled, etc.) →
-    //     "Voltron keeper: <Weapon>" with the keeper note as body.
-    //   - Other source matched (deprecated Aegis re-enabled, custom
-    //     wishlist) → "Wishlist match: <Weapon>" with comma-separated
-    //     source names. Rare power-user path.
+    // Brief #20 + #21: notification copy reflects Charles-as-primary plus
+    // the new notification-only custom-source mode. Branches:
+    //   - Charles matched → "<Tier>-Tier <Weapon>"; body = trimmed Charles
+    //     note. Append " · Voltron confirmed" when applicable, then
+    //     " · Also flagged by <name>" for any notification-only co-matches.
+    //   - Voltron-family only → "Voltron keeper: <Weapon>".
+    //   - Notification-only sources are the only signal → generic
+    //     "Wishlist match: <Weapon>" with custom source names; no tier
+    //     prefix (custom URLs aren't authoritative tier sources).
+    //   - Other built-in source matched (deprecated Aegis re-enabled, etc.) →
+    //     same generic "Wishlist match: <Weapon>" path. Rare.
     const matches = entry.wishlistMatches ?? [];
     if (matches.length === 0) return;
 
     const charlesMatch = matches.find((m) => m.sourceId === CHARLES_SOURCE_ID);
     const voltronConfirmed = matches.some((m) => m.confirmsCharles === true);
+    const notificationOnlyMatches = matches.filter(
+      (m) => m.notificationOnly === true,
+    );
+    const visibleMatches = matches.filter((m) => m.notificationOnly !== true);
     const weaponLabel = entry.weaponType ?? 'Weapon';
 
     if (charlesMatch) {
       const tier = entry.weaponTier ?? charlesMatch.weaponTier;
       title = tier ? `${tier}-Tier ${entry.itemName}` : `Wishlist match: ${entry.itemName}`;
-      const charlesNote = charlesMatch.notes
+      const baseNote = charlesMatch.notes
         ? truncateNote(stripTagsTrailer(charlesMatch.notes), 80)
         : weaponLabel;
-      message = voltronConfirmed
-        ? `${charlesNote} · Voltron confirmed`
-        : charlesNote;
+      const suffixes: string[] = [];
+      if (voltronConfirmed) suffixes.push('Voltron confirmed');
+      if (notificationOnlyMatches.length > 0) {
+        const names = notificationOnlyMatches.map((m) => m.sourceName).join(', ');
+        suffixes.push(`Also flagged by ${names}`);
+      }
+      message = suffixes.length > 0 ? `${baseNote} · ${suffixes.join(' · ')}` : baseNote;
     } else {
-      const voltronMatch = matches.find((m) => VOLTRON_FAMILY_IDS.has(m.sourceId));
+      const voltronMatch = visibleMatches.find((m) => VOLTRON_FAMILY_IDS.has(m.sourceId));
       if (voltronMatch) {
         title = `Voltron keeper: ${entry.itemName}`;
         message = voltronMatch.notes
           ? truncateNote(stripTagsTrailer(voltronMatch.notes), 80)
           : weaponLabel;
-      } else {
+      } else if (visibleMatches.length > 0) {
+        // Some other built-in source matched (deprecated Aegis manually
+        // re-enabled, etc.). Generic copy with source names.
         title = `Wishlist match: ${entry.itemName}`;
-        message = matches.map((m) => m.sourceName).join(', ');
+        message = visibleMatches.map((m) => m.sourceName).join(', ');
+      } else {
+        // Only notification-only sources matched — custom URLs producing
+        // a dark-data alert. No tier authority, no curator decoration.
+        title = `Wishlist match: ${entry.itemName}`;
+        message = notificationOnlyMatches.map((m) => m.sourceName).join(', ');
       }
     }
   }
