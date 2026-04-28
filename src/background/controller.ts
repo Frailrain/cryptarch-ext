@@ -34,7 +34,25 @@ import {
 } from '@/core/storage/scoring-config';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { collectWeaponGodrolls, resolveBestTier } from '@/core/wishlists/matcher';
+import { CHARLES_SOURCE_ID } from '@/core/wishlists/known-sources';
 import { getCachedPerkPool } from '@/core/bungie/perk-pool-cache';
+
+// Brief #20: notification-side Voltron family identifier set. Same two ids
+// the matcher uses for confirmsCharles tagging; centralized here as a
+// const so the notification branch doesn't accidentally drift.
+const VOLTRON_FAMILY_IDS = new Set(['voltron', 'choosy-voltron']);
+
+// Brief #20: shave Voltron's "|tags:..." trailer off note text before
+// truncating. Voltron entries often append a metadata trailer the user
+// shouldn't see in notifications.
+function stripTagsTrailer(note: string): string {
+  return note.split('|tags:')[0].trim();
+}
+
+function truncateNote(note: string, max: number): string {
+  if (note.length <= max) return note;
+  return note.slice(0, max).trimEnd() + '…';
+}
 import {
   appendToFeed,
   getFeedEntry,
@@ -453,22 +471,43 @@ function maybeNotify(entry: DropFeedEntry, locked: boolean): void {
     );
     message = bits.length > 0 ? bits.join(' / ') : 'Rule match';
   } else if (entry.itemType === 'weapon') {
-    // Brief #19: tier + roll-type filters retired. Charles's URL is
-    // pre-filtered to the user's selected minTier/ppc, and the matcher
-    // suppresses Voltron-only matches when Charles didn't match (with
-    // voltronConfirmation on). So the surviving wishlistMatches array
-    // is already gated to "this drop is worth notifying about" — fire
-    // on any non-empty match set.
+    // Brief #20: notification copy reflects Charles-as-primary mental model.
+    // Three branches:
+    //   - Charles matched → "<Tier>-Tier <Weapon>", body = trimmed Charles
+    //     note + "· Voltron confirmed" suffix when any voltron-family
+    //     match flagged confirmsCharles.
+    //   - Voltron-family only (toggle off, Charles disabled, etc.) →
+    //     "Voltron keeper: <Weapon>" with the keeper note as body.
+    //   - Other source matched (deprecated Aegis re-enabled, custom
+    //     wishlist) → "Wishlist match: <Weapon>" with comma-separated
+    //     source names. Rare power-user path.
     const matches = entry.wishlistMatches ?? [];
     if (matches.length === 0) return;
 
-    const tierPrefix = entry.weaponTier ? `[Tier ${entry.weaponTier}] ` : '';
-    title = `${tierPrefix}${entry.itemName}`;
+    const charlesMatch = matches.find((m) => m.sourceId === CHARLES_SOURCE_ID);
+    const voltronConfirmed = matches.some((m) => m.confirmsCharles === true);
     const weaponLabel = entry.weaponType ?? 'Weapon';
-    if (matches.length === 1) {
-      message = `${weaponLabel} · Wishlist: ${matches[0].sourceName}`;
+
+    if (charlesMatch) {
+      const tier = entry.weaponTier ?? charlesMatch.weaponTier;
+      title = tier ? `${tier}-Tier ${entry.itemName}` : `Wishlist match: ${entry.itemName}`;
+      const charlesNote = charlesMatch.notes
+        ? truncateNote(stripTagsTrailer(charlesMatch.notes), 80)
+        : weaponLabel;
+      message = voltronConfirmed
+        ? `${charlesNote} · Voltron confirmed`
+        : charlesNote;
     } else {
-      message = `${weaponLabel} · Matches ${matches.length} wishlists`;
+      const voltronMatch = matches.find((m) => VOLTRON_FAMILY_IDS.has(m.sourceId));
+      if (voltronMatch) {
+        title = `Voltron keeper: ${entry.itemName}`;
+        message = voltronMatch.notes
+          ? truncateNote(stripTagsTrailer(voltronMatch.notes), 80)
+          : weaponLabel;
+      } else {
+        title = `Wishlist match: ${entry.itemName}`;
+        message = matches.map((m) => m.sourceName).join(', ');
+      }
     }
   }
 

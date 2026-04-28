@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildDropPerkDisplayModel, selectCollapsedPerk } from './drop-display-model';
+import {
+  buildDropPerkDisplayModel,
+  selectCollapsedPerk,
+  voltronConfirmedFromMatches,
+} from './drop-display-model';
 import type { PerkVisualState } from './perk-visual-state';
 import type { DropFeedEntry, WishlistMatch } from '@/shared/types';
 import type { WeaponPerkPoolSnapshot } from '@/core/bungie/perk-pool-cache';
@@ -17,6 +21,47 @@ function makeState(overrides: Partial<PerkVisualState>): PerkVisualState {
     ...overrides,
   };
 }
+
+describe('voltronConfirmedFromMatches', () => {
+  it('returns false for undefined / empty input', () => {
+    expect(voltronConfirmedFromMatches(undefined)).toBe(false);
+    expect(voltronConfirmedFromMatches([])).toBe(false);
+  });
+
+  it('returns false when no match has confirmsCharles', () => {
+    expect(
+      voltronConfirmedFromMatches([
+        { sourceId: 'voltron', sourceName: 'Voltron' },
+        { sourceId: 'charles-aegis-tiered', sourceName: 'Aegis Tiered (Charles)' },
+      ]),
+    ).toBe(false);
+  });
+
+  it('returns true when at least one match has confirmsCharles=true', () => {
+    expect(
+      voltronConfirmedFromMatches([
+        { sourceId: 'charles-aegis-tiered', sourceName: 'Aegis Tiered (Charles)' },
+        {
+          sourceId: 'voltron',
+          sourceName: 'Voltron',
+          confirmsCharles: true,
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it('treats confirmsCharles=false the same as missing', () => {
+    expect(
+      voltronConfirmedFromMatches([
+        {
+          sourceId: 'voltron',
+          sourceName: 'Voltron',
+          confirmsCharles: false,
+        },
+      ]),
+    ).toBe(false);
+  });
+});
 
 describe('selectCollapsedPerk', () => {
   it('three rolled perks where one is tagged → returns the tagged one', () => {

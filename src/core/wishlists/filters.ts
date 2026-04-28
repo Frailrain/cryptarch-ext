@@ -1,10 +1,4 @@
-import type {
-  RollTypeFilter,
-  TierFilter,
-  TierLetter,
-  WishlistMatch,
-  WishlistSource,
-} from '@/shared/types';
+import type { TierFilter, TierLetter } from '@/shared/types';
 
 // Tier ordering for filter comparisons. Index 0 is best (S), 5 is worst (F).
 // Mirrors TIER_ORDER in matcher.ts but as a lookup record for O(1) rank checks.
@@ -39,33 +33,8 @@ export function passesTierFilter(
   return TIER_RANK[weaponTier] <= TIER_RANK[filter];
 }
 
-/**
- * Roll-type filter: true if the drop's matches satisfy the active filter
- * mode. All modes require at least one match — a drop with no matches
- * doesn't pass any roll-type filter (it shouldn't fire a notification at
- * all if nothing flagged it).
- *
- *   - 'all-matched': any source matched → pass
- *   - 'popular':     2+ sources matched → pass (Brief #11 consensus signal)
- *   - 'strong-pve':  at least one matching source has pveOriented=true → pass
- *
- * 'strong-pvp' deliberately absent — no acceptable PVP source exists as of
- * Brief #12. See the header comment in known-sources.ts.
- */
-export function passesRollTypeFilter(
-  matches: WishlistMatch[] | undefined,
-  filter: RollTypeFilter,
-  sources: WishlistSource[],
-): boolean {
-  const list = matches ?? [];
-  if (list.length === 0) return false;
-  if (filter === 'all-matched') return true;
-  if (filter === 'popular') return list.length >= 2;
-  if (filter === 'strong-pve') {
-    const pveIds = new Set(
-      sources.filter((s) => s.pveOriented).map((s) => s.id),
-    );
-    return list.some((m) => pveIds.has(m.sourceId));
-  }
-  return false;
-}
+// Brief #20 cleanup: passesRollTypeFilter removed — Brief #19 retired the
+// roll-type filter UI, and the matcher now embeds the equivalent logic
+// (Charles-as-primary + voltronConfirmation) in matchDropAgainstWishlists.
+// passesTierFilter stays — collectWeaponGodrolls still uses it to gate
+// non-Charles wishlist sources to the user's selected minTier.

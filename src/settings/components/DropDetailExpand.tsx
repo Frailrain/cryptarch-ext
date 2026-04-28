@@ -8,19 +8,32 @@
 // icon row aren't clipped.
 
 import { useEffect, useState } from 'react';
-import type { DropFeedEntry, TierLetter, WishlistMatch } from '@/shared/types';
+import type {
+  DropFeedEntry,
+  TierLetter,
+  WeaponFilterConfig,
+  WishlistMatch,
+} from '@/shared/types';
 import {
   requestPerkPool,
   type WeaponPerkPoolSnapshot,
 } from '@/adapters/perk-pool-messages';
-import { getItem } from '@/adapters/storage';
+import { getItem, onKeyChanged } from '@/adapters/storage';
 import type { ManifestProgress } from '@/core/bungie/manifest';
 import {
   buildDropPerkDisplayModel,
+  voltronConfirmedFromMatches,
   type ExpandedPerk,
   type PerkColumnDisplayModel,
 } from '@/core/wishlists/drop-display-model';
+import { loadWeaponFilterConfig } from '@/core/storage/scoring-config';
 import { PerkIcon } from './PerkIcon';
+import { ThumbsUp } from './ThumbsUp';
+
+// Voltron-family source ids for partitioning the wishlist note section
+// when voltronConfirmation is on. Mirrors matcher.ts but kept local — the
+// page side doesn't need a shared constant for two ids.
+const VOLTRON_FAMILY_IDS = new Set(['voltron', 'choosy-voltron']);
 
 // The dashboard already keeps `manifest.progress` warm in its storage subset
 // (see settings/main.tsx). When stage is 'done', version is the live one.
@@ -40,6 +53,17 @@ type FetchState =
 
 export function DropDetailExpand({ entry }: { entry: DropFeedEntry }) {
   const [state, setState] = useState<FetchState>({ kind: 'loading' });
+  // Brief #20: live-subscribed voltronConfirmation toggle. Toggling off in
+  // the Weapons tab restores the parallel-source rendering immediately
+  // even on entries captured while it was on.
+  const [voltronConfirmation, setVoltronConfirmation] = useState<boolean>(
+    () => loadWeaponFilterConfig().voltronConfirmation,
+  );
+  useEffect(() => {
+    return onKeyChanged<WeaponFilterConfig>('weaponFilterConfig', (v) => {
+      if (v) setVoltronConfirmation(v.voltronConfirmation);
+    });
+  }, []);
 
   useEffect(() => {
     if (entry.itemHash === undefined) {
@@ -97,25 +121,80 @@ export function DropDetailExpand({ entry }: { entry: DropFeedEntry }) {
         />
       )}
 
-      {entry.wishlistMatches && entry.wishlistMatches.length > 0 && (
-        <div className="space-y-1 pt-2 border-t border-bg-border/30">
-          {dedupeMatchesByNote(entry.wishlistMatches).map((group) => (
-            <div key={group.sourceNames.join('|')} className="text-xs text-text-muted">
-              <span className="text-rahool-blue">{group.sourceNames.join(' · ')}</span>
-              {group.tier && (
-                <span className="ml-2 text-[10px] uppercase">Tier {group.tier}</span>
-              )}
-              {group.note && <span className="ml-2 italic">{group.note}</span>}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Brief #20: when voltronConfirmation is on AND any Voltron-family
+          match flags confirmsCharles, render two stacked sections —
+          primary wishlist matches at full weight, then a subtle "Voltron
+          community keepers also flagged this roll" annotation. Otherwise
+          all matches dedupe into the original combined section. */}
+      <WishlistNoteSection
+        matches={entry.wishlistMatches ?? []}
+        voltronConfirmation={voltronConfirmation}
+      />
 
       {showVersionDisclaimer && (
         <div className="text-[10px] text-text-muted pt-1">
           Captured against manifest v{entry.manifestVersion}. Current sandbox may differ.
         </div>
       )}
+    </div>
+  );
+}
+
+function WishlistNoteSection({
+  matches,
+  voltronConfirmation,
+}: {
+  matches: WishlistMatch[];
+  voltronConfirmation: boolean;
+}) {
+  if (matches.length === 0) return null;
+
+  const confirmed =
+    voltronConfirmation && voltronConfirmedFromMatches(matches);
+  if (!confirmed) {
+    return <NoteGroupList matches={matches} />;
+  }
+
+  const primary = matches.filter(
+    (m) => !VOLTRON_FAMILY_IDS.has(m.sourceId) || m.confirmsCharles !== true,
+  );
+  const voltron = matches.filter(
+    (m) => VOLTRON_FAMILY_IDS.has(m.sourceId) && m.confirmsCharles === true,
+  );
+
+  return (
+    <>
+      {primary.length > 0 && <NoteGroupList matches={primary} />}
+      {voltron.length > 0 && (
+        <div className="border-l-2 border-rahool-blue/40 pl-3 mt-2 space-y-1">
+          <div className="text-[11px] font-medium text-text-muted flex items-center gap-1.5">
+            <ThumbsUp size={11} className="text-rahool-blue/80" />
+            Voltron community keepers also flagged this roll
+          </div>
+          {dedupeMatchesByNote(voltron).map((group) => (
+            <div key={group.sourceNames.join('|')} className="text-xs text-text-muted">
+              <span className="text-rahool-blue/70">{group.sourceNames.join(' · ')}</span>
+              {group.note && <span className="ml-2 italic">{group.note}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function NoteGroupList({ matches }: { matches: WishlistMatch[] }) {
+  return (
+    <div className="space-y-1 pt-2 border-t border-bg-border/30">
+      {dedupeMatchesByNote(matches).map((group) => (
+        <div key={group.sourceNames.join('|')} className="text-xs text-text-muted">
+          <span className="text-rahool-blue">{group.sourceNames.join(' · ')}</span>
+          {group.tier && (
+            <span className="ml-2 text-[10px] uppercase">Tier {group.tier}</span>
+          )}
+          {group.note && <span className="ml-2 italic">{group.note}</span>}
+        </div>
+      ))}
     </div>
   );
 }

@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { DropFeedEntry, TierLetter } from '@/shared/types';
+import type { DropFeedEntry, TierLetter, WeaponFilterConfig } from '@/shared/types';
 import { TierChip } from '../components/TierChip';
 import { DropDetailExpand } from '../components/DropDetailExpand';
 import { RolledPerkRow } from '../components/RolledPerkRow';
+import { ThumbsUp } from '../components/ThumbsUp';
 import { requestPerkPool } from '@/adapters/perk-pool-messages';
+import { loadWeaponFilterConfig } from '@/core/storage/scoring-config';
+import { onKeyChanged } from '@/adapters/storage';
+import { voltronConfirmedFromMatches } from '@/core/wishlists/drop-display-model';
+import { CHARLES_SOURCE_ID } from '@/core/wishlists/known-sources';
 
 const TIER_FILTER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
 
@@ -146,6 +151,18 @@ export function DropLogPanel(props: DropLogPanelProps) {
   // policy keeps visual noise low and matches DIM's interaction.
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // Brief #20: voltronConfirmation toggle gates the Voltron-as-confirmation
+  // visual treatment in rows. Live-subscribed so flipping the toggle on the
+  // Weapons tab updates the Drop Log immediately (no reload needed).
+  const [voltronConfirmation, setVoltronConfirmation] = useState<boolean>(
+    () => loadWeaponFilterConfig().voltronConfirmation,
+  );
+  useEffect(() => {
+    return onKeyChanged<WeaponFilterConfig>('weaponFilterConfig', (v) => {
+      if (v) setVoltronConfirmation(v.voltronConfirmation);
+    });
+  }, []);
+
   // Brief #14 Part E idle-time prewarm: as soon as the dashboard mounts,
   // kick off perk-pool fetches for the most recent 10 unique weapon hashes
   // in the feed. The SW's tiered cache + in-flight guard mean this is safe
@@ -281,6 +298,7 @@ export function DropLogPanel(props: DropLogPanelProps) {
               nowTick={nowTick}
               highlighted={entry.instanceId === highlightInstanceId}
               onLockDrop={props.onLockDrop}
+              voltronConfirmation={voltronConfirmation}
               expanded={expandedId === entry.instanceId}
               onToggleExpand={() =>
                 setExpandedId((prev) =>
@@ -331,6 +349,7 @@ function DropLogRow({
   nowTick,
   highlighted,
   onLockDrop,
+  voltronConfirmation,
   expanded,
   onToggleExpand,
 }: {
@@ -338,6 +357,7 @@ function DropLogRow({
   nowTick: number;
   highlighted: boolean;
   onLockDrop: (instanceId: string) => void;
+  voltronConfirmation: boolean;
   expanded: boolean;
   onToggleExpand: () => void;
 }) {
@@ -368,6 +388,21 @@ function DropLogRow({
   // entries fall through as non-clickable — nothing to look up for them.
   const expandable = entry.itemHash !== undefined && !entry.deleted;
 
+  // Brief #20: gate the Voltron-as-confirmation treatment on (a) any match
+  // carries confirmsCharles AND (b) the user has the toggle on right now.
+  // Honoring the live toggle means flipping it back to off restores the
+  // parallel-source rendering even on entries captured while it was on.
+  const voltronConfirmed =
+    voltronConfirmation && voltronConfirmedFromMatches(entry.wishlistMatches);
+  // Source-tag display split: when confirmed, separate the primary
+  // (Charles) tag from the Voltron-family confirmations and render Voltron
+  // as a lower-weight annotation. When not confirmed (toggle off, or no
+  // Voltron match), every match renders as a parallel chip.
+  const visibleMatches = entry.wishlistMatches ?? [];
+  const charlesMatch = visibleMatches.find((m) => m.sourceId === CHARLES_SOURCE_ID);
+  const otherMatches = visibleMatches.filter((m) => m.sourceId !== CHARLES_SOURCE_ID);
+  const reorderedTags = voltronConfirmed && charlesMatch;
+
   return (
     <li
       data-instance-id={entry.instanceId}
@@ -395,21 +430,50 @@ function DropLogRow({
           {entry.itemName}
         </div>
         <div className="text-xs text-text-muted truncate">{subtitle}</div>
-        {/* Wishlist source tags below the subtitle. Brief #12 follow-up
-            removed the redundant left-side tier chip from this row; tier
-            now lives in the right-side chip slot below where the grade
-            chip used to live. */}
-        {entry.wishlistMatches && entry.wishlistMatches.length > 0 && (
-          <div className="mt-1 flex flex-wrap items-center gap-1">
-            {entry.wishlistMatches.map((m) => (
-              <span
-                key={m.sourceId}
-                title={m.notes || m.sourceName}
-                className="text-[10px] px-1.5 py-0.5 rounded border bg-rahool-blue/15 text-rahool-blue border-rahool-blue/40"
-              >
-                {m.sourceName}
-              </span>
-            ))}
+        {/* Brief #20: source tags below subtitle. When voltronConfirmed,
+            render Charles at full weight + a lower-weight "+ Voltron
+            confirmed" annotation. Otherwise render every match as parallel
+            chips (preserves the toggle-off path and non-Voltron secondary
+            sources like Aegis Endgame). */}
+        {visibleMatches.length > 0 && (
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            {reorderedTags && charlesMatch ? (
+              <>
+                <span
+                  title={charlesMatch.notes || charlesMatch.sourceName}
+                  className="text-[10px] px-1.5 py-0.5 rounded border bg-rahool-blue/15 text-rahool-blue border-rahool-blue/40"
+                >
+                  {charlesMatch.sourceName}
+                </span>
+                {/* Other non-Voltron matches stay as parallel chips —
+                    voltron-family entries collapse into the annotation. */}
+                {otherMatches
+                  .filter((m) => m.confirmsCharles !== true)
+                  .map((m) => (
+                    <span
+                      key={m.sourceId}
+                      title={m.notes || m.sourceName}
+                      className="text-[10px] px-1.5 py-0.5 rounded border bg-rahool-blue/15 text-rahool-blue border-rahool-blue/40"
+                    >
+                      {m.sourceName}
+                    </span>
+                  ))}
+                <span className="inline-flex items-center gap-1 text-[10px] italic text-text-muted">
+                  <ThumbsUp size={11} className="text-rahool-blue/80" />
+                  Voltron confirmed
+                </span>
+              </>
+            ) : (
+              visibleMatches.map((m) => (
+                <span
+                  key={m.sourceId}
+                  title={m.notes || m.sourceName}
+                  className="text-[10px] px-1.5 py-0.5 rounded border bg-rahool-blue/15 text-rahool-blue border-rahool-blue/40"
+                >
+                  {m.sourceName}
+                </span>
+              ))
+            )}
           </div>
         )}
       </div>
@@ -419,21 +483,32 @@ function DropLogRow({
       <RolledPerkRow entry={entry} iconSize={28} />
       {/* Right-side chip slot. Brief #12 follow-up: tier chip replaces the
           grade chip for legendary weapons; exotic and armor-match chips
-          unchanged (those are different concepts from tier). Empty slot when
-          a weapon has no tier metadata — grade is no longer surfaced here. */}
-      {entry.isExotic ? (
-        <ExoticChip />
-      ) : isArmor ? (
-        entry.armorMatched === null ? (
-          <span className="w-6 h-6 inline-block" aria-hidden="true" />
+          unchanged. Brief #20: when Voltron-confirmed, a small thumbs-up
+          renders adjacent to the tier chip — independent of the source-tag
+          strip's "Voltron confirmed" annotation, since the tier+thumbs-up
+          combination is the at-a-glance scan signal for the row. */}
+      <div className="inline-flex items-center gap-1">
+        {entry.isExotic ? (
+          <ExoticChip />
+        ) : isArmor ? (
+          entry.armorMatched === null ? (
+            <span className="w-6 h-6 inline-block" aria-hidden="true" />
+          ) : (
+            <MatchChip matched={entry.armorMatched} />
+          )
+        ) : entry.weaponTier ? (
+          <TierChip tier={entry.weaponTier} compact />
         ) : (
-          <MatchChip matched={entry.armorMatched} />
-        )
-      ) : entry.weaponTier ? (
-        <TierChip tier={entry.weaponTier} compact />
-      ) : (
-        <span className="w-6 h-6 inline-block" aria-hidden="true" />
-      )}
+          <span className="w-6 h-6 inline-block" aria-hidden="true" />
+        )}
+        {voltronConfirmed && (
+          <ThumbsUp
+            size={13}
+            className="text-rahool-blue/80"
+            title="Confirmed by Voltron community keepers"
+          />
+        )}
+      </div>
       <LockIcon
         locked={entry.locked}
         shouldShow={lockRelevant && !entry.deleted}

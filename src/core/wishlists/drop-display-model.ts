@@ -108,6 +108,16 @@ export function buildDropPerkDisplayModel(args: {
   });
 }
 
+// Brief #20: did at least one Voltron-family match accompany a Charles match?
+// Pure helper — no React, no storage. Callers gate the visual treatment on
+// (this AND the live voltronConfirmation toggle) so a user who flips the
+// toggle off sees Voltron return to parallel-source rendering even on
+// historical entries that were captured with confirmsCharles flagged.
+export function voltronConfirmedFromMatches(matches: WishlistMatch[] | undefined): boolean {
+  if (!matches) return false;
+  return matches.some((m) => m.confirmsCharles === true);
+}
+
 // Choose which unlocked perk to surface in the collapsed view. Prefer a
 // tagged perk when one exists in the unlocked set (so a crafted weapon
 // with the godroll perk available shows the godroll's icon, not whichever
