@@ -283,7 +283,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         sendResponse({ ok: true, payload: taxonomy });
         return;
       }
-      if (msg.type === 'wishlist-test-multi-source') {
+      if (import.meta.env.DEV && msg.type === 'wishlist-test-multi-source') {
         // ensureWishlistCacheReady is also awaited inside findMultiSourceItems
         // and cacheSummary now, but call it here too so the diagnostic snapshot
         // below sees the same warm cache the discovery does.
@@ -384,7 +384,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         });
         return;
       }
-      if (msg.type === 'wishlist-test-fallback') {
+      if (import.meta.env.DEV && msg.type === 'wishlist-test-fallback') {
         const outcome = await testFallback();
         appendTestDropToFeed({
           itemName: '[Test] Unrecognized legendary',
@@ -401,7 +401,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         });
         return;
       }
-      if (msg.type === 'wishlist-test-armor') {
+      if (import.meta.env.DEV && msg.type === 'wishlist-test-armor') {
         // Pull a random armor piece from the user's current Destiny inventory,
         // run it through scoreItem, append the result to the drop log. Calls
         // runPollCycle with an empty baseline so every current item comes back
@@ -504,7 +504,15 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
 // Install Brief #11 debug helpers on globalThis. Each SW wake re-attaches them
 // since module-level state doesn't persist across teardown. See
 // debug-wishlists.ts for usage.
-installWishlistDebug();
+//
+// Brief #22.1: dev-mode only — Vite replaces import.meta.env.DEV with a
+// literal at build time so prod builds drop the call (and Rollup
+// tree-shakes the entire debug-wishlists module + every cacheSummary /
+// findMultiSourceItems / testFallback / testMatch import that's now
+// unreachable).
+if (import.meta.env.DEV) {
+  installWishlistDebug();
+}
 
 // Warm the wishlist cache on every SW wake, not just when handlePollAlarm runs.
 // Otherwise debug helpers and message handlers that don't await

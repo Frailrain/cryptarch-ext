@@ -8,9 +8,7 @@ import type { DropFeedEntry } from '@/shared/types';
 import { DropLogPanel, type DropTypeFilter, type DropMatchFilter } from './tabs/DropLogPanel';
 import { RulesPanel } from './tabs/RulesPanel';
 import { WeaponsPanel } from './tabs/WeaponsPanel';
-// Brief #12.5: WishlistTestPanel hidden for clan distribution. Re-enable the
-// import + render in the Drops tab section when iterating on matcher behavior.
-// import { WishlistTestPanel } from './components/WishlistTestPanel';
+import { WishlistTestPanel } from './components/WishlistTestPanel';
 import { SessionExpiredBanner } from './components/SessionExpiredBanner';
 import { ManifestLoadingCard } from './components/ManifestLoadingCard';
 import { AutolockFailedBanner } from './components/AutolockFailedBanner';
@@ -314,13 +312,11 @@ export function Settings() {
                   </button>
                 </div>
 
-                {/* Brief #12.5: dev test buttons (multi-source / fallback /
-                    armor) hidden for clan distribution. Re-enable by
-                    uncommenting when iterating on matcher behavior. The
-                    component file stays in place — see
-                    src/settings/components/WishlistTestPanel.tsx and the
-                    SW message handlers in service-worker.ts. */}
-                {/* <WishlistTestPanel /> */}
+                {/* Brief #12.5 + #22.1: rendered only in development. Vite
+                    replaces import.meta.env.DEV with a literal at build time,
+                    so prod builds tree-shake the panel + the SW test handlers
+                    it talks to. Re-enable in dev with `npm run build:dev`. */}
+                {import.meta.env.DEV && <WishlistTestPanel />}
 
                 <DropLogPanel
                   feed={feed}
