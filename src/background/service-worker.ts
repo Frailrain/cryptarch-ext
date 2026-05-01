@@ -11,6 +11,8 @@
 
 import { POLL_ALARM_NAME, POLL_PERIOD_MINUTES } from '@/shared/constants';
 import { log, error as logError } from '@/adapters/logger';
+import { ensureLoaded } from '@/adapters/storage';
+import { migrateAuthOnUpgrade } from '@/core/bungie/auth';
 import {
   handleGetArmorTaxonomy,
   handlePollAlarm,
@@ -76,6 +78,15 @@ async function ensurePollAlarm(): Promise<void> {
 chrome.runtime.onInstalled.addListener((details) => {
   log('sw', 'onInstalled', details.reason);
   void ensurePollAlarm();
+  // Brief #22: on update, detect tokens minted under the old public-client
+  // flow (no refresh_token) and flip auth.state to 'expired' so the popup
+  // and dashboard render the reconnect banner. No-op on fresh installs.
+  if (details.reason === 'update') {
+    void (async () => {
+      await ensureLoaded();
+      migrateAuthOnUpgrade();
+    })();
+  }
   // Kick off manifest download proactively so the options page can clear its
   // first-boot loading card without waiting for the user to sign in or for
   // the first drop to trigger a lazy fetch.

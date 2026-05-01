@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loadFeed } from '@/core/storage/drop-feed';
 import { isLoggedIn } from '@/core/bungie/auth';
-import { loadPrimaryMembership } from '@/core/storage/tokens';
+import { loadAuthState, loadPrimaryMembership, type AuthState } from '@/core/storage/tokens';
 import { getItem, onKeyChanged, setItem } from '@/adapters/storage';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
+import { send } from '@/shared/messaging';
 import { RolledPerkRow } from '@/settings/components/RolledPerkRow';
 import { requestPerkPool } from '@/adapters/perk-pool-messages';
 import {
@@ -50,6 +51,8 @@ const PENDING_NAV_KEY = 'pendingNavigation';
 
 export function Popup() {
   const [signedIn, setSignedIn] = useState<boolean>(() => isLoggedIn());
+  const [authState, setAuthState] = useState<AuthState>(() => loadAuthState());
+  const [reconnectPending, setReconnectPending] = useState(false);
   const [displayName, setDisplayName] = useState<string | null>(
     () => loadPrimaryMembership()?.displayName ?? null,
   );
@@ -63,6 +66,9 @@ export function Popup() {
   useEffect(() => {
     const unsubFeed = onKeyChanged<DropFeedEntry[]>('drop-feed', (v) => setFeed(v ?? []));
     const unsubTokens = onKeyChanged('auth.tokens', (v) => setSignedIn(!!v));
+    const unsubAuthState = onKeyChanged<AuthState>('auth.state', (v) => {
+      setAuthState(v ?? 'signed-out');
+    });
     const unsubMembership = onKeyChanged<{ displayName: string } | null>(
       'auth.primaryMembership',
       (v) => setDisplayName(v?.displayName ?? null),
@@ -78,6 +84,7 @@ export function Popup() {
     return () => {
       unsubFeed();
       unsubTokens();
+      unsubAuthState();
       unsubMembership();
       unsubFilter();
       unsubScoring();
@@ -149,6 +156,16 @@ export function Popup() {
     window.close();
   }, []);
 
+  // Brief #22: one-click reconnect from the popup banner. Triggers the same
+  // auth-start message the dashboard's sign-in button uses; SW handles the
+  // OAuth flow. On success auth.state flips back to 'signed-in' and the
+  // banner disappears via the onKeyChanged subscription above.
+  const handleReconnect = useCallback(async () => {
+    setReconnectPending(true);
+    await send({ type: 'auth-start' });
+    setReconnectPending(false);
+  }, []);
+
   const visible = useMemo(() => {
     return feed
       .filter((e) => {
@@ -169,8 +186,13 @@ export function Popup() {
       .slice(0, MAX_ROWS);
   }, [feed, filter]);
 
+  const showExpiredBanner = authState === 'expired';
+
   return (
     <div className="flex flex-col">
+      {showExpiredBanner && (
+        <ExpiredBanner pending={reconnectPending} onReconnect={handleReconnect} />
+      )}
       <Header
         signedIn={signedIn}
         displayName={displayName}
@@ -225,6 +247,27 @@ export function Popup() {
           Buy me a coffee ☕
         </a>
       </div>
+    </div>
+  );
+}
+
+function ExpiredBanner({
+  pending,
+  onReconnect,
+}: {
+  pending: boolean;
+  onReconnect: () => void;
+}) {
+  return (
+    <div className="border-b border-amber-500/40 bg-amber-500/10 px-3 py-2 flex items-center justify-between gap-2">
+      <span className="text-xs text-amber-300">Bungie connection expired</span>
+      <button
+        onClick={onReconnect}
+        disabled={pending}
+        className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40 hover:bg-amber-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {pending ? 'Waiting…' : 'Reconnect →'}
+      </button>
     </div>
   );
 }

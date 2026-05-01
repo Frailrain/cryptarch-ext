@@ -10,6 +10,7 @@ import {
   type ProfileComponent,
 } from './endpoints';
 import { bungieRateLimiter } from './rate-limiter';
+import { saveAuthState } from '@/core/storage/tokens';
 import {
   BungieApiError,
   BungieAuthError,
@@ -89,6 +90,17 @@ export async function bungieRequest<T>(
       await sleep(1000 * Math.pow(2, attempt));
       attempt += 1;
       continue;
+    }
+
+    // Brief #22: 401 from an authenticated call after refresh-ahead means the
+    // session is genuinely lost (user revoked access, refresh chain broke).
+    // Flip to 'expired' so the popup/dashboard render the reconnect banner.
+    // Do NOT retry — refresh-ahead is supposed to have produced a fresh token,
+    // a retry with the same Bearer would just 401 again.
+    if (response.status === 401 && authenticated) {
+      saveAuthState('expired');
+      logError('bungieRequest', '401 on authenticated call — session expired', { url });
+      throw new BungieAuthError(`Bungie returned 401 on ${url}`);
     }
 
     let parsed: BungieServerResponse<T>;

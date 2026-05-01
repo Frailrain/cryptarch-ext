@@ -3,21 +3,28 @@ import {
   clearPrimaryMembership,
   clearTokens,
   type DestinyMembership,
+  loadAuthState,
   loadPrimaryMembership,
   loadTokens,
+  saveAuthState,
   saveTokens,
   type StoredTokens,
 } from '@/core/storage/tokens';
 import { getRedirectUri, launchAuthFlow } from '@/adapters/oauth';
-import { logJson, error as logError } from '@/adapters/logger';
-import { OAUTH_AUTHORIZE_URL, OAUTH_TOKEN_URL } from './endpoints';
-import { BungieAuthError, BungieNetworkError, type OAuthTokenResponse } from './types';
+import { log, logJson, error as logError } from '@/adapters/logger';
+import { OAUTH_AUTHORIZE_URL } from './endpoints';
+import { BungieAuthError, type OAuthTokenResponse } from './types';
+import {
+  AuthRefreshExpiredError,
+  exchangeCode,
+  refreshTokens as workerRefreshTokens,
+} from '@/auth/cryptarchAuthClient';
 
 const CLIENT_ID: string = import.meta.env.VITE_BUNGIE_CLIENT_ID ?? '';
-const CLIENT_SECRET: string = import.meta.env.VITE_BUNGIE_CLIENT_SECRET ?? '';
-const API_KEY: string = import.meta.env.VITE_BUNGIE_API_KEY ?? '';
 
-const ACCESS_REFRESH_BUFFER_MS = 60_000;
+// Refresh-ahead window: refresh whenever the access token has less than this
+// long before expiry. Brief #22 calls for 10 min on a 1hr token.
+const ACCESS_REFRESH_BUFFER_MS = 10 * 60 * 1000;
 
 export interface AuthState {
   tokens: StoredTokens | null;
@@ -34,19 +41,24 @@ export function getAuthState(): AuthState {
 }
 
 export function isLoggedIn(): boolean {
+  // Brief #22: an explicit 'expired' state (set when refresh fails or a
+  // Bungie call returns 401) overrides time-based logic. The user keeps
+  // their stored tokens until they reconnect — that's how the popup/dashboard
+  // know to render the reconnect banner instead of "Sign in."
+  if (loadAuthState() === 'expired') return false;
   const tokens = loadTokens();
   if (!tokens) return false;
   // Confidential clients have a refresh token whose expiry bounds the session
   // (~90 days). Public clients only have an access token (~1 hour) and the
-  // user has to re-sign-in when it expires.
+  // user has to re-sign-in when it expires. Post-#22 every new session is
+  // confidential, but legacy stored tokens may still lack refresh metadata
+  // until the upgrade migration kicks in.
   const sessionExpiresAt = tokens.refreshTokenExpiresAt ?? tokens.accessTokenExpiresAt;
   return sessionExpiresAt > Date.now();
 }
 
-function basicAuthHeader(): string | null {
-  if (!CLIENT_SECRET) return null;
-  const creds = `${CLIENT_ID}:${CLIENT_SECRET}`;
-  return `Basic ${btoa(creds)}`;
+export function isAuthDisconnected(): boolean {
+  return loadAuthState() === 'expired';
 }
 
 function randomState(): string {
@@ -71,63 +83,10 @@ function tokensFromResponse(resp: OAuthTokenResponse): StoredTokens {
   return tokens;
 }
 
-async function requestToken(formBody: string): Promise<OAuthTokenResponse> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/x-www-form-urlencoded',
-    'X-API-Key': API_KEY,
-  };
-  const basic = basicAuthHeader();
-  if (basic) headers['Authorization'] = basic;
-
-  const loggedHeaders: Record<string, string> = { ...headers };
-  if (loggedHeaders['Authorization']) loggedHeaders['Authorization'] = '[REDACTED]';
-  loggedHeaders['X-API-Key'] = '[REDACTED]';
-
-  logJson('requestToken', 'outgoing', {
-    method: 'POST',
-    url: OAUTH_TOKEN_URL,
-    explicitHeaders: loggedHeaders,
-    mode: basic ? 'confidential' : 'public',
-  });
-
-  let response: Response;
-  try {
-    response = await fetch(OAUTH_TOKEN_URL, {
-      method: 'POST',
-      headers,
-      body: formBody,
-    });
-  } catch (err) {
-    throw new BungieNetworkError('Network error during token exchange', err);
-  }
-
-  const json = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-
-  if (!response.ok) {
-    logError('requestToken', 'error response', {
-      url: OAUTH_TOKEN_URL,
-      httpStatus: response.status,
-      body: json,
-    });
-    const desc =
-      (json['error_description'] as string | undefined) ??
-      (json['error'] as string | undefined) ??
-      'unknown';
-    throw new BungieAuthError(`Token endpoint HTTP ${response.status}: ${desc}`);
-  }
-
-  const tokenResponse = json as unknown as OAuthTokenResponse;
-  if (typeof tokenResponse.access_token !== 'string') {
-    throw new BungieAuthError('Malformed token response');
-  }
-
-  return tokenResponse;
-}
-
 // Launch the Bungie OAuth authorize page via chrome.identity.launchWebAuthFlow
-// and exchange the returned code for tokens. Unlike the Overwolf flow, there is
-// no persisted "pending state" — chrome.identity blocks until the redirect
-// completes, so state validation happens in one pass.
+// and exchange the returned code for tokens via the cryptarch-auth Worker.
+// chrome.identity blocks until the redirect completes, so state validation
+// happens in one pass.
 export async function startLoginFlow(): Promise<StoredTokens> {
   const state = randomState();
   const redirectUri = getRedirectUri();
@@ -141,16 +100,16 @@ export async function startLoginFlow(): Promise<StoredTokens> {
     throw new BungieAuthError('OAuth state mismatch');
   }
 
-  const form = new URLSearchParams({
-    grant_type: 'authorization_code',
+  logJson('auth', 'exchanging code via worker', { clientId: CLIENT_ID });
+  const tokenResp = await exchangeCode({
     code: result.code,
-    client_id: CLIENT_ID,
-    redirect_uri: redirectUri,
-  }).toString();
-
-  const tokenResp = await requestToken(form);
+    clientId: CLIENT_ID,
+    redirectUri,
+  });
   const tokens = tokensFromResponse(tokenResp);
   saveTokens(tokens);
+  // A successful exchange clears any prior 'expired' state — fresh session.
+  saveAuthState('signed-in');
   return tokens;
 }
 
@@ -159,31 +118,43 @@ export async function refreshTokens(): Promise<StoredTokens | null> {
   refreshInFlight = (async () => {
     const current = loadTokens();
     if (!current) return null;
-    // Public clients have no refresh token — there's nothing to refresh, and
-    // the caller will get null and have to prompt the user to re-sign-in.
     if (!current.refreshToken || current.refreshTokenExpiresAt === undefined) {
+      // Pre-#22 public-client tokens lack a refresh token. The upgrade
+      // migration flips state to 'expired' in onInstalled; defensively do
+      // the same here in case migration was missed.
+      saveAuthState('expired');
       return null;
     }
     if (current.refreshTokenExpiresAt <= Date.now()) {
-      await logout();
+      saveAuthState('expired');
       return null;
     }
-    const form = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: current.refreshToken,
-      client_id: CLIENT_ID,
-    }).toString();
 
     try {
-      const resp = await requestToken(form);
+      const resp = await workerRefreshTokens({
+        refreshToken: current.refreshToken,
+        clientId: CLIENT_ID,
+      });
       const tokens = tokensFromResponse(resp);
       saveTokens(tokens);
+      log('auth', `refresh-ahead fired, new expiresAt=${tokens.accessTokenExpiresAt}`);
+      // If we'd previously flipped to 'expired' (e.g. a 401 from a Bungie
+      // API call surfaced before the next refresh-ahead window), a successful
+      // refresh restores 'signed-in'.
+      if (loadAuthState() !== 'signed-in') saveAuthState('signed-in');
       return tokens;
     } catch (err) {
-      if (err instanceof BungieAuthError) {
-        await logout();
+      if (err instanceof AuthRefreshExpiredError) {
+        // Brief #22: refresh_token rejected by Bungie. Don't clear tokens —
+        // the UI watches auth.state to decide between "signed in," "expired"
+        // (show reconnect banner), and "signed out." Tokens stay on disk
+        // until the user reconnects (overwrites them) or signs out (clears).
+        saveAuthState('expired');
         return null;
       }
+      // AuthUpstreamError / AuthConfigError / unexpected: bubble up so the
+      // caller's logging captures it. Don't flip state for transient errors.
+      logError('auth', 'refresh failed', err instanceof Error ? err.message : err);
       throw err;
     }
   })();
@@ -198,6 +169,7 @@ export async function refreshTokens(): Promise<StoredTokens | null> {
 export async function getValidAccessToken(): Promise<string | null> {
   const current = loadTokens();
   if (!current) return null;
+  if (loadAuthState() === 'expired') return null;
   if (current.accessTokenExpiresAt - Date.now() > ACCESS_REFRESH_BUFFER_MS) {
     return current.accessToken;
   }
@@ -209,4 +181,19 @@ export async function logout(): Promise<void> {
   clearTokens();
   clearPrimaryMembership();
   clearBungieUser();
+}
+
+// Brief #22: on extension upgrade, detect tokens that were minted under the
+// old public-client flow (no refresh_token field) and flip to 'expired' so
+// the reconnect banner shows on next popup open. Wired from the SW's
+// onInstalled handler with reason='update'.
+export function migrateAuthOnUpgrade(): void {
+  const tokens = loadTokens();
+  if (!tokens) return;
+  const isLegacyPublicClient =
+    !tokens.refreshToken || tokens.refreshTokenExpiresAt === undefined;
+  if (isLegacyPublicClient) {
+    saveAuthState('expired');
+    logJson('auth', 'legacy public-client tokens detected; marked expired', {});
+  }
 }

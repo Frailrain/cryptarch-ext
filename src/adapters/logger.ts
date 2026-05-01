@@ -14,7 +14,6 @@ export type LogTag =
   | 'armor-roll'
   | 'wishlist'
   | 'bungieRequest'
-  | 'requestToken'
   | 'sw'
   | 'notify'
   | 'taxonomy'
