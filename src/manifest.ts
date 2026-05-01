@@ -1,20 +1,28 @@
 import { defineManifest } from '@crxjs/vite-plugin';
 import pkg from '../package.json';
 
-export default defineManifest({
+// Pinning the public half of an RSA-2048 keypair makes the unpacked
+// extension ID deterministic across rebuilds and machines. Without this,
+// Chrome derives an ID from the unpacked path, which churns and forces a
+// Bungie portal + worker origin-allowlist re-update because OAuth keys
+// off the ID.
+//
+// IMPORTANT: only emitted in development builds. Web Store uploads MUST
+// omit `key` for items that already have a Store-registered key (Cryptarch
+// does — it was registered when v0.5.0 first shipped). With `key` absent,
+// the Store uses its registered key and the published item gets the
+// Store-signed ID (nmalcfpnieandofopopffppijcadibkg). Dev unpacked builds
+// keep the pinned local ID (nllmfpgnfndapapboelfefhdoneljhhk).
+const DEV_PINNED_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq1Hnc6tFg4paU+T3q0629dkzpxLNub3V7QU0k4uLRTf9IVLDpF/aWbHvZ0Q5xeAIDx9f1AvB1atriQYQezjrz9zbjm0CLDQz9mosoRK4PLDWsle36y8r0RGQVb3JiHgzP70+KBQ67vN54RSpw+LRPKPf16owYq5vl3MBJGPT03hggdoE4+dJ27W3ujNFGpjEA3Te2iIOQ/TA9x5gGEBoklcxep+eUdNLMwniVhmpF9tkbVp2JXuEhK+y7ZnIGA0iEKwsArdegMpY6lUWg2eMfmInzLS1ZC7VFLKxgJ/sOm2zfgqyAszyZzS498UeM6SpDNfir1iZyKhodl+r/B1QXQIDAQAB';
+
+export default defineManifest((env) => ({
   manifest_version: 3,
   name: 'Cryptarch - Destiny 2 Loot Appraiser',
   version: pkg.version,
   description:
     'Real-time god roll alerts for Destiny 2. Auto-locks keepers before you dismantle them.',
-  // Pinning the public half of an RSA-2048 keypair here makes the unpacked
-  // extension ID deterministic across rebuilds and machines. Without this,
-  // Chrome derives an ID from the unpacked path, which churns whenever the
-  // path or contents shift — and every churn forces a Bungie portal +
-  // worker origin-allowlist re-update because OAuth keys off the ID.
-  // Public key only; the matching private key is throwaway for Chrome Web
-  // Store distribution (the store re-signs).
-  key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq1Hnc6tFg4paU+T3q0629dkzpxLNub3V7QU0k4uLRTf9IVLDpF/aWbHvZ0Q5xeAIDx9f1AvB1atriQYQezjrz9zbjm0CLDQz9mosoRK4PLDWsle36y8r0RGQVb3JiHgzP70+KBQ67vN54RSpw+LRPKPf16owYq5vl3MBJGPT03hggdoE4+dJ27W3ujNFGpjEA3Te2iIOQ/TA9x5gGEBoklcxep+eUdNLMwniVhmpF9tkbVp2JXuEhK+y7ZnIGA0iEKwsArdegMpY6lUWg2eMfmInzLS1ZC7VFLKxgJ/sOm2zfgqyAszyZzS498UeM6SpDNfir1iZyKhodl+r/B1QXQIDAQAB',
+  ...(env.mode === 'development' ? { key: DEV_PINNED_KEY } : {}),
   icons: {
     16: 'icons/icon16.png',
     48: 'icons/icon48.png',
@@ -45,4 +53,4 @@ export default defineManifest({
     'https://raw.githubusercontent.com/*',
     'https://cryptarch-auth.cryptarch.workers.dev/*',
   ],
-});
+}));
