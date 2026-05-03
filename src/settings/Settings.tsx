@@ -20,6 +20,7 @@ import type {
   TierLetter,
 } from '@/shared/types';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
+import { AUTO_LOCK_KEY, loadAutoLockEnabled, saveAutoLockEnabled } from '@/core/storage/settings';
 
 // Brief #12: tab labels reorganized to put weapon configuration on equal
 // footing with armor. "Rules" → "Armor", "Wishlists" folded into "Weapons".
@@ -78,6 +79,9 @@ export function Settings() {
   const [autoLockOnArmorMatch, setAutoLockOnArmorMatch] = useState<boolean>(
     () => loadScoringConfig().autoLockOnArmorMatch,
   );
+  const [autoLockEnabled, setAutoLockEnabled] = useState<boolean>(
+    () => loadAutoLockEnabled(),
+  );
   const [highlightInstanceId, setHighlightInstanceId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -116,6 +120,9 @@ export function Settings() {
         setAutolockFailed(value);
       },
     );
+    const unsubAutoLock = onKeyChanged<boolean>(AUTO_LOCK_KEY, (value) => {
+      setAutoLockEnabled(value === true);
+    });
     return () => {
       unsubFeed();
       unsubTokens();
@@ -124,6 +131,7 @@ export function Settings() {
       unsubManifest();
       unsubManifestProgress();
       unsubAutolockFailed();
+      unsubAutoLock();
     };
   }, []);
 
@@ -178,6 +186,11 @@ export function Settings() {
     setAutoLockOnArmorMatch(next);
     const config = loadScoringConfig();
     saveScoringConfig({ ...config, autoLockOnArmorMatch: next });
+  }, []);
+
+  const handleMasterAutoLockToggle = useCallback((next: boolean) => {
+    setAutoLockEnabled(next);
+    saveAutoLockEnabled(next);
   }, []);
 
   const handleSignIn = useCallback(async () => {
@@ -286,6 +299,30 @@ export function Settings() {
           </div>
         ) : (
           <>
+            {/* Brief #23: master auto-lock toggle. Default OFF — drops fire a
+                notification with a "Lock" action button that the user clicks
+                to lock manually. ON restores pre-#23 behavior (SetLockState
+                fires automatically per the armor/weapon predicate). */}
+            <div className="rounded-lg border border-bg-border bg-bg-card p-4 flex items-center justify-between gap-4">
+              <div>
+                <div className="text-sm text-text-primary">Auto-lock god rolls</div>
+                <div className="text-xs text-text-muted">
+                  When off, drop notifications include a Lock button you can
+                  click to lock manually. When on, Cryptarch locks matching
+                  drops as soon as they're detected.
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-text-muted shrink-0">
+                <input
+                  type="checkbox"
+                  checked={autoLockEnabled}
+                  onChange={(e) => handleMasterAutoLockToggle(e.target.checked)}
+                  className="accent-rahool-blue"
+                />
+                {autoLockEnabled ? 'On' : 'Off'}
+              </label>
+            </div>
+
             <nav className="flex gap-1 border-b border-bg-border">
               <TabButton active={tab === 'drops'} onClick={() => setTab('drops')}>
                 Drops

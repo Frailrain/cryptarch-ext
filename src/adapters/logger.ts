@@ -8,6 +8,7 @@ export type LogTag =
   | 'drops'
   | 'scoring'
   | 'autolock'
+  | 'lock'
   | 'auth'
   | 'inventory'
   | 'manifest'

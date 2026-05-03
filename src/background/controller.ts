@@ -11,7 +11,7 @@
 // Autolock, chrome.notifications, and rules UI wiring are deferred to session 2.
 
 import { ensureLoaded, getItem, setItem } from '@/adapters/storage';
-import { log, logJson, error as logError } from '@/adapters/logger';
+import { log, logJson, warn as logWarn, error as logError } from '@/adapters/logger';
 import { getMembershipsForCurrentUser } from '@/core/bungie/api';
 import {
   isLoggedIn,
@@ -33,6 +33,7 @@ import {
   loadScoringConfig,
   loadWeaponFilterConfig,
 } from '@/core/storage/scoring-config';
+import { loadAutoLockEnabled } from '@/core/storage/settings';
 import { ensureWishlistCacheReady } from '@/core/wishlists/cache';
 import { collectWeaponGodrolls, resolveBestTier } from '@/core/wishlists/matcher';
 import { CHARLES_SOURCE_ID } from '@/core/wishlists/known-sources';
@@ -437,9 +438,32 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
     };
     appendToFeed(entry);
     markFirstSeen(entry.instanceId, drop.detectedAt);
-    maybeNotify(entry, false);
-    if (shouldAutoLock(entry, config)) {
+    // Brief #23: master auto-lock toggle gates whether SetLockState fires
+    // automatically. When OFF (default), notifications carry a Lock action
+    // button so the user can lock manually from the toast. When ON, the
+    // pre-#23 predicate decides per-drop and the notification fires bare.
+    const masterAutoLock = loadAutoLockEnabled();
+    if (masterAutoLock && shouldAutoLock(entry, config)) {
+      logJson('lock', 'auto-lock enabled, locking automatically', {
+        itemName: entry.itemName,
+        instanceId: entry.instanceId,
+      });
+      maybeNotify(entry, false);
       void handleAutoLock(entry);
+    } else {
+      // Show the Lock button only when the user's "lock manually" path is
+      // viable: master toggle OFF and we have the characterId needed to
+      // dispatch SetLockState. Exotic weapons get the button too — the
+      // pre-#23 auto-lock skipped them, but a manual click is the user's
+      // explicit choice and shouldn't be hidden.
+      const showLockButton = !masterAutoLock && !!entry.characterId;
+      if (showLockButton) {
+        logJson('lock', 'auto-lock disabled, offering lock via notification button', {
+          itemName: entry.itemName,
+          instanceId: entry.instanceId,
+        });
+      }
+      maybeNotify(entry, false, { withLockButton: showLockButton });
     }
   }
 
@@ -460,7 +484,20 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
 // single drop fires at most one toast. instanceId is the notificationId so any
 // later call for the same drop (flap re-detection, or autolock "(locked)"
 // suffix update) replaces rather than stacks.
-function maybeNotify(entry: DropFeedEntry, locked: boolean): void {
+//
+// Brief #23: opts.withLockButton attaches a "Lock" action button to the
+// notification, used when auto-lock is disabled so the user can lock straight
+// from the toast. The chrome.notifications.onButtonClicked listener (in
+// service-worker.ts) reads the entry by notificationId === instanceId.
+interface MaybeNotifyOpts {
+  withLockButton?: boolean;
+}
+
+function maybeNotify(
+  entry: DropFeedEntry,
+  locked: boolean,
+  opts: MaybeNotifyOpts = {},
+): void {
   let title: string | null = null;
   let message: string | null = null;
 
@@ -533,11 +570,25 @@ function maybeNotify(entry: DropFeedEntry, locked: boolean): void {
   if (!title || !message) return;
   if (locked) message = `${message} (locked)`;
 
+  // Brief #23: trace the path from "we decided to notify" through
+  // chrome.notifications.create. The adapter logs the create call and its
+  // callback; this pair tags the upstream decision.
+  logJson('notify', 'god roll detected', {
+    itemName: entry.itemName,
+    instanceId: entry.instanceId,
+  });
+  logJson('notify', 'building notification payload', {
+    title,
+    locked,
+    withLockButton: !!opts.withLockButton,
+  });
+
   void showNotification({
     title,
     message,
     iconUrl: entry.itemIcon,
     notificationId: entry.instanceId,
+    buttons: opts.withLockButton ? [{ title: 'Lock' }] : undefined,
   }).catch(() => {
     // Already logged inside the adapter; swallow so a failed toast doesn't
     // bubble up and kill the rest of the poll cycle.
@@ -679,11 +730,19 @@ async function handleAutoLock(entry: DropFeedEntry): Promise<void> {
   const newCount = currentCount + 1;
   updateFeedRetryCount(entry.instanceId, newCount);
 
-  const exhausted =
-    result.kind === 'failed' ||
-    (result.kind === 'retryable' && newCount >= MAX_RETRY_CYCLES);
-
-  if (exhausted) {
+  // Brief #23: 1623 (DestinyItemNotFound) used to bubble through to the
+  // user-facing AutolockFailedBanner after MAX_RETRY_CYCLES. In practice the
+  // item is almost always in fact locked by then — Bungie's profile cache
+  // just hadn't caught up. Demote 1623 exhaustion to a console warning so
+  // we stop crying wolf at users whose locks succeeded.
+  if (result.kind === 'retryable' && newCount >= MAX_RETRY_CYCLES) {
+    logWarn(
+      'lock',
+      `SetLockState returned 1623 (DestinyItemNotFound) for ${entry.instanceId} — likely race condition, item already locked`,
+    );
+    return;
+  }
+  if (result.kind === 'failed') {
     broadcastAutolockFailed(entry);
   }
   // Otherwise: retryable and still under cap — retryPendingAutolocks picks it
@@ -703,7 +762,13 @@ function broadcastAutolockFailed(entry: DropFeedEntry): void {
 // Scan the feed for entries that still want to be autolocked after a prior
 // cycle's 1623 failure. Called from handlePollAlarm after new drops are
 // processed so first-attempts and retries run in the same poll tick.
+//
+// Brief #23: bail early if the master auto-lock toggle is OFF. Without this
+// guard, drops that started retrying under the old default would keep
+// retrying after the user disabled auto-lock — surprising and contrary to
+// the toggle's stated intent.
 export async function retryPendingAutolocks(): Promise<void> {
+  if (!loadAutoLockEnabled()) return;
   const config = loadScoringConfig();
   config.armorRules = loadArmorRules();
   // Brief #11 Part D: see comment in handlePollAlarm. Matcher reads from cache.

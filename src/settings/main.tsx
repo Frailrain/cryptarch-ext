@@ -19,6 +19,10 @@ const DASHBOARD_STORAGE_KEYS = [
   'manifest.progress',
   'autolock.failed.last',
   'scoring-config',
+  // Brief #23: master auto-lock toggle (default off). Read on initial paint
+  // so the toggle reflects the persisted value without a flash of the wrong
+  // state, and so saves from one tab propagate to all open dashboards.
+  'settings.autoLock',
   'pendingNavigation',
   'armor-rules',
   'wishlistSources',

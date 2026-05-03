@@ -14,6 +14,10 @@ export type MessageType =
   | 'wishlist-test-multi-source'
   | 'wishlist-test-fallback'
   | 'wishlist-test-armor'
+  // Brief #23: dev-only test path for forcing a fake god-roll notification.
+  // SW handler is gated behind import.meta.env.DEV; the type stays in this
+  // union so callers (SW console snippets) still typecheck in dev builds.
+  | 'debug-test-notification'
   | 'lock-drop'
   // Brief #12.5 Part D: dashboard delegates all wishlist mutations to the SW.
   // Settings page is a viewer; the SW owns fetching/parsing/persisting.

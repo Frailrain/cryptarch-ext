@@ -3,7 +3,8 @@ import {
   type ImportedWishList,
   type ScoringConfig,
 } from '@/core/scoring/types';
-import { getItem, setItem } from '@/adapters/storage';
+import { getItem, removeItem, setItem } from '@/adapters/storage';
+import { STORES, idbGet, idbPut } from '@/core/storage/indexeddb';
 import {
   BUILTIN_WISHLIST_SOURCES,
   CHARLES_SOURCE_ID,
@@ -27,6 +28,12 @@ const WISHLIST_SOURCES_KEY = 'wishlistSources';
 const WEAPON_FILTER_KEY = 'weaponFilterConfig';
 const CHARLES_CONFIG_KEY = 'charlesSourceConfig';
 
+// Brief #24: parsed wishlists live in IndexedDB now (see indexeddb.ts comment
+// on DB_VERSION 3). Pre-#24 builds wrote them to chrome.storage.local under
+// WISHLISTS_KEY, which broadcast the full payload to every extension page on
+// every write. The IDB store uses a single key to hold the whole array.
+const WISHLISTS_IDB_KEY = 'all';
+
 // armorRules lives in its own storage key so the scoring-config blob stays
 // small. Brief #11 Part D removed the corresponding `wishlists` field from
 // ScoringConfig — the matcher reads from the wishlist cache directly now.
@@ -49,16 +56,26 @@ export function saveScoringConfig(config: ScoringConfig): void {
   setItem<StoredScoringConfig>(SCORING_CONFIG_KEY, rest);
 }
 
-export function loadWishlists(): ImportedWishList[] {
-  return getItem<ImportedWishList[]>(WISHLISTS_KEY) ?? [];
+// Brief #24: read from IndexedDB. Migration of pre-#24 chrome.storage.local
+// data lives in cache.ts hydrateWishlistCache (the only caller) — keeping the
+// migration adjacent to the in-memory cache state means the migration runs
+// exactly when the Map is being populated, no separate boot hook needed.
+export async function loadWishlists(): Promise<ImportedWishList[]> {
+  const stored = await idbGet<ImportedWishList[]>(STORES.wishlists, WISHLISTS_IDB_KEY);
+  return stored ?? [];
 }
 
 // Brief #12.5 Part D: every saveWishlists write also derives and persists the
 // lightweight metadata view, keeping the two storage keys in sync without
 // callers having to remember. The settings page reads metadata-only and
 // avoids pulling 60 MB of parsed entries through IPC.
-export function saveWishlists(lists: ImportedWishList[]): void {
-  setItem<ImportedWishList[]>(WISHLISTS_KEY, lists);
+//
+// Brief #24: the heavy entries blob now goes to IndexedDB (no cross-context
+// broadcast). Metadata stays in chrome.storage.local because it's small
+// (~hundreds of bytes) and the dashboard subscribes to it via onKeyChanged
+// for live UI updates.
+export async function saveWishlists(lists: ImportedWishList[]): Promise<void> {
+  await idbPut<ImportedWishList[]>(STORES.wishlists, lists, WISHLISTS_IDB_KEY);
   setItem<WishlistMetadata[]>(
     WISHLIST_METADATA_KEY,
     lists.map((l) => ({
@@ -69,6 +86,24 @@ export function saveWishlists(lists: ImportedWishList[]): void {
       importedAt: l.importedAt,
     })),
   );
+}
+
+// Brief #24 migration helper. Called once during cache hydrate. If the legacy
+// chrome.storage.local 'wishlists' key still exists, copy it to IDB and remove
+// it from chrome.storage.local. Idempotent — second call finds the key gone
+// and no-ops. Returns the migrated lists so the hydrate path can use them
+// without a second round trip.
+export async function migrateWishlistsFromChromeStorage(): Promise<
+  ImportedWishList[] | null
+> {
+  const legacy = getItem<ImportedWishList[]>(WISHLISTS_KEY);
+  if (!legacy || legacy.length === 0) return null;
+  await idbPut<ImportedWishList[]>(STORES.wishlists, legacy, WISHLISTS_IDB_KEY);
+  // Removing from chrome.storage.local fires one final onChanged event with
+  // the full oldValue. That's a one-time spike for any open dashboard, but
+  // it's the only way to free the chrome.storage allocation.
+  removeItem(WISHLISTS_KEY);
+  return legacy;
 }
 
 // Brief #12.5 Part D: settings page reads this instead of loadWishlists.

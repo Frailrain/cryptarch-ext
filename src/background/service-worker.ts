@@ -10,8 +10,10 @@
 // before any async work starts.
 
 import { POLL_ALARM_NAME, POLL_PERIOD_MINUTES } from '@/shared/constants';
-import { log, error as logError } from '@/adapters/logger';
+import { log, logJson, warn as logWarn, error as logError } from '@/adapters/logger';
 import { ensureLoaded } from '@/adapters/storage';
+import { logNotificationPermissionLevel, showNotification } from '@/adapters/notifications';
+import { BungieApiError } from '@/core/bungie/types';
 import { migrateAuthOnUpgrade } from '@/core/bungie/auth';
 import {
   handleGetArmorTaxonomy,
@@ -114,6 +116,84 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   log('sw', 'alarm fired', alarm.name);
   void handlePollAlarm();
 });
+
+// Brief #23: notification action button handler. The "Lock" button on a
+// god-roll toast (attached when auto-lock is disabled) routes through here.
+// notificationId === entry.instanceId, so the feed entry is the lookup key —
+// no separate map needed, which sidesteps the SW-teardown cleanup concern
+// the brief flagged. ensureLoaded is required because Chrome can wake the SW
+// from teardown specifically to run this listener and storage cache may be
+// cold.
+chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+  if (buttonIndex !== 0) return;
+  void handleLockButtonClicked(notificationId);
+});
+
+async function handleLockButtonClicked(notificationId: string): Promise<void> {
+  logJson('lock', 'user clicked Lock on notification', { id: notificationId });
+  await ensureLoaded();
+  const entry = getFeedEntry(notificationId);
+  if (!entry) {
+    logError('lock', 'feed entry not found for notification', notificationId);
+    return;
+  }
+  if (entry.locked) {
+    logJson('lock', 'entry already locked, skipping', { instanceId: entry.instanceId });
+    return;
+  }
+  if (!entry.characterId) {
+    logError('lock', 'entry missing characterId, cannot lock', entry.instanceId);
+    return;
+  }
+  const primary = loadPrimaryMembership();
+  if (!primary) {
+    logError('lock', 'not signed in, cannot lock', entry.instanceId);
+    return;
+  }
+  logJson('lock', 'SetLockState called', { itemInstanceId: entry.instanceId });
+  try {
+    const outcome = await setLockState(
+      primary.membershipType,
+      entry.characterId,
+      entry.instanceId,
+      true,
+    );
+    updateFeedLock(entry.instanceId, true);
+    logJson('lock', 'SetLockState result', {
+      itemInstanceId: entry.instanceId,
+      result: 'success',
+      outcome,
+    });
+    // Brief #23: replace the toast (same notificationId) so the user gets
+    // visual confirmation the lock landed without a stale Lock button
+    // hanging around.
+    void showNotification({
+      title: `Locked: ${entry.itemName}`,
+      message: 'Item locked successfully.',
+      iconUrl: entry.itemIcon,
+      notificationId: entry.instanceId,
+    }).catch(() => {
+      // Already logged inside the adapter.
+    });
+  } catch (err) {
+    // Brief #23: 1623 (DestinyItemNotFound) is the noisy false-failure case.
+    // The lock POST often succeeds even though Bungie's profile cache says
+    // the item isn't there — log a warning and treat as success rather than
+    // surfacing an alarming "lock failed" toast for an item that's locked.
+    if (err instanceof BungieApiError && err.errorCode === 1623) {
+      logWarn(
+        'lock',
+        `SetLockState returned 1623 (DestinyItemNotFound) for ${entry.instanceId} — likely race condition, item already locked`,
+      );
+      updateFeedLock(entry.instanceId, true);
+      return;
+    }
+    logError('lock', 'SetLockState failed', {
+      itemInstanceId: entry.instanceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
   (async () => {
@@ -281,6 +361,24 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
       if (msg.type === 'get-armor-taxonomy') {
         const taxonomy = await handleGetArmorTaxonomy();
         sendResponse({ ok: true, payload: taxonomy });
+        return;
+      }
+      if (import.meta.env.DEV && msg.type === 'debug-test-notification') {
+        // Brief #23: smoke-test path for the chrome.notifications pipeline.
+        // Doesn't require a real god roll drop — fires a fake notification
+        // with the same Lock-button shape a real drop would, so Matt can
+        // confirm the OS toast shows up on Windows from the SW console:
+        //   chrome.runtime.sendMessage({ type: 'debug-test-notification' })
+        const fakeId = `debug-test-${Date.now()}`;
+        await showNotification({
+          title: 'Cryptarch test notification',
+          message: 'If you see this, chrome.notifications is working.',
+          notificationId: fakeId,
+          buttons: [{ title: 'Lock' }],
+        }).catch(() => {
+          // logged in adapter
+        });
+        sendResponse({ ok: true, payload: { notificationId: fakeId } });
         return;
       }
       if (import.meta.env.DEV && msg.type === 'wishlist-test-multi-source') {
@@ -689,3 +787,8 @@ function appendTestDropToFeed(input: {
 }
 
 log('sw', 'service worker loaded');
+
+// Brief #23: log chrome.notifications.getPermissionLevel on every SW wake so
+// a 'denied' state (Windows Focus Assist, OS-level extension block, etc.) is
+// visible immediately in the SW console without having to probe by hand.
+logNotificationPermissionLevel();

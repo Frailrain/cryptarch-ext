@@ -14,10 +14,11 @@ import {
   loadWishlistMetadata,
   loadWishlists,
   loadWishlistSources,
+  migrateWishlistsFromChromeStorage,
   saveWishlistMetadata,
   saveWishlists,
 } from '@/core/storage/scoring-config';
-import { ensureLoaded, onKeyChanged } from '@/adapters/storage';
+import { ensureLoaded } from '@/adapters/storage';
 import { refreshWishlists } from './fetch';
 
 if (typeof window !== 'undefined') {
@@ -60,21 +61,31 @@ let hydrated = false;
 let backgroundRefreshKicked = false;
 
 /**
- * Sync cache hydration. Must be called after `ensureLoaded()` has resolved —
- * uses the storage adapter's sync `getItem` under the hood. Idempotent within a
- * worker wake; the per-wake `hydrated` flag short-circuits subsequent calls.
+ * Hydrates the in-memory cache Map from IndexedDB. Must be called after
+ * `ensureLoaded()` has resolved (the migration helper reads chrome.storage
+ * via the sync adapter). Idempotent within a worker wake; the per-wake
+ * `hydrated` flag short-circuits subsequent calls.
  *
- * Graceful empty-cache: if storage holds nothing for the wishlists key (first
+ * Brief #24: includes one-shot migration from chrome.storage.local. If the
+ * legacy `cryptarch:wishlists` key still exists, we copy it to IDB and clear
+ * the chrome.storage entry. Subsequent SW wakes find an empty legacy key and
+ * skip the migration (idempotent).
+ *
+ * Graceful empty-cache: if neither IDB nor legacy storage has anything (first
  * install, cleared storage, corrupt blob), the Map stays empty and matcher
  * calls return zero matches. The fetch layer populates it on the first refresh.
  */
-export function hydrateWishlistCache(): void {
+export async function hydrateWishlistCache(): Promise<void> {
   if (hydrated) return;
   cache.clear();
   status.clear();
   let stored: ImportedWishList[] = [];
   try {
-    stored = loadWishlists();
+    // Brief #24: migration first. If chrome.storage.local still has the legacy
+    // wishlists key, this returns it and copies into IDB. Otherwise null and
+    // we fall through to the IDB read.
+    const migrated = await migrateWishlistsFromChromeStorage();
+    stored = migrated ?? (await loadWishlists());
   } catch {
     stored = [];
   }
@@ -107,7 +118,7 @@ export function hydrateWishlistCache(): void {
  */
 export async function hydrateWishlistCacheForWorker(): Promise<void> {
   await ensureLoaded();
-  hydrateWishlistCache();
+  await hydrateWishlistCache();
   syncMetadataFromCache();
 }
 
@@ -188,7 +199,7 @@ export function endPersistBatch(): void {
   persistBatchDepth = Math.max(0, persistBatchDepth - 1);
   if (persistBatchDepth === 0 && persistBatchDirty) {
     persistBatchDirty = false;
-    persistCache();
+    void persistCache();
   }
 }
 
@@ -197,7 +208,7 @@ function schedulePersist(): void {
     persistBatchDirty = true;
     return;
   }
-  persistCache();
+  void persistCache();
 }
 
 export function getCachedList(sourceId: string): ImportedWishList | undefined {
@@ -253,67 +264,14 @@ export function removeFromCache(sourceId: string): void {
   schedulePersist();
 }
 
-function persistCache(): void {
-  saveWishlists(Array.from(cache.values()));
+async function persistCache(): Promise<void> {
+  await saveWishlists(Array.from(cache.values()));
 }
 
-// Cross-context cache sync: the storage adapter's onChanged listener already
-// keeps the raw key/value cache in sync, but our wishlist Map needs its own
-// hook because it derives from a single key. Without this, a settings-page
-// refresh of a source wouldn't be visible to the SW's matcher until the next
-// worker wake — which broke the in-page Wishlist matcher test panel and meant
-// up to 30s of stale scoring after any user-initiated config change.
-//
-// Brief #12.5 follow-up: gate this listener to SW context only. cache.ts is
-// transitively loaded in the settings page (via WeaponsPanel → fetch.ts →
-// cache.ts) and the popup, but neither context ever uses the in-memory cache
-// Map — only the SW's matcher does. Without this gate, every wishlists-key
-// write (60 MB+ payload from SW background refresh) triggered a pointless
-// 60 MB iteration in the settings page context, freezing the dashboard for
-// 10-20s when the user opened the Weapons tab. SW global lacks `window`.
-//
-// Same-context (SW) writes are handled idempotently: setFetchSuccess updates
-// the Map then calls persistCache which triggers this listener; the
-// importedAt comparison below makes the re-process a no-op since the Map
-// already holds the just-written list with the same timestamp.
-if (typeof window === 'undefined') {
-  onKeyChanged<ImportedWishList[]>('wishlists', (newValue) => {
-    // Don't gate on `hydrated`. If the SW wakes for a handler that didn't go
-    // through ensureWishlistCacheReady, this listener serves as the cold-path
-    // initializer too. `hydrated` gets set below so subsequent calls to
-    // hydrateWishlistCache are no-ops.
-    const incoming = new Map<string, ImportedWishList>();
-    if (newValue) {
-      for (const list of newValue) {
-        if (list && typeof list.id === 'string') incoming.set(list.id, list);
-      }
-    }
-    // Drop entries that disappeared from storage (another context deleted a source).
-    for (const id of Array.from(cache.keys())) {
-      if (!incoming.has(id)) {
-        cache.delete(id);
-        status.delete(id);
-      }
-    }
-    // Add or refresh entries that are new or have a newer importedAt.
-    for (const [id, list] of incoming) {
-      const existing = cache.get(id);
-      if (existing && existing.importedAt === list.importedAt) continue;
-      cache.set(id, list);
-      const prev = status.get(id);
-      // Don't clobber an in-flight 'fetching' state; that context's own
-      // setFetchSuccess will land the final state.
-      if (!prev || prev.state !== 'fetching') {
-        status.set(id, {
-          state: 'ok',
-          lastSuccessAt: list.importedAt,
-          lastAttemptAt: list.importedAt,
-          entryCount: list.entryCount,
-        });
-      }
-    }
-    // Mark hydrated so subsequent hydrateWishlistCache calls short-circuit
-    // instead of re-reading from storage redundantly.
-    hydrated = true;
-  });
-}
+// Brief #24: the cross-context onChanged sync listener that previously lived
+// here is gone. With wishlists moved to IndexedDB (which doesn't broadcast),
+// the SW is the sole writer and reader. There's no other context to stay in
+// sync with — the dashboard talks to the SW via message handlers
+// (wishlist-messages.ts) and reads the small wishlistMetadata key for display.
+// Same-context writes are already handled by setFetchSuccess updating both
+// the Map and the persistence layer in lockstep.
