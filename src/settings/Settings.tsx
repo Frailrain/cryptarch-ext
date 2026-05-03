@@ -398,7 +398,7 @@ export function Settings() {
         )}
 
         <footer className="text-xs text-text-muted text-center pt-6">
-          Cryptarch · Chrome edition · v0.6.1
+          Cryptarch · Chrome edition · v0.6.2
         </footer>
       </main>
     </div>
