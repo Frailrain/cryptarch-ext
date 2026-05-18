@@ -1,0 +1,498 @@
+/*
+ * Cryptarch · Destiny-native foundations
+ * --------------------------------------------------------------------
+ * Re-skinned to feel like Destiny 2's in-game menus and Companion App:
+ *   - Sharp corners (max 2px), thin colored top accents on cards
+ *   - Uppercase headers in light weight (300), wide letter-spacing
+ *   - Outfit (Google Fonts) — geometric sans, close to Neue Haas Grotesk
+ *   - Muted gold (#ceae33) for legendary / actions, muted red/green for
+ *     shard/keep, soft blue-white #e8e8e8 for primary text
+ *   - No box-shadows. Depth = background stepping only.
+ *   - 1px hairline borders at rgba(255,255,255,0.08)
+ *   - Custom donut-ring reticle cursor (D2 style)
+ *   - Sacred-geometry pentagonal background pattern
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500&display=swap');
+
+/* ---------- 1. RAW TOKENS ---------- */
+:root {
+  /* Surfaces — deep, cool, slate-not-black. */
+  --bg-deep:     #0f1114; /* deepest panels, popup background */
+  --bg-base:     #1a1d21; /* primary canvas */
+  --bg-elevated: #2a2d32; /* hover row, raised inputs, modal/sheet */
+  --bg-pressed:  #15181c; /* pressed buttons, inset wells */
+
+  /* Borders — barely-there hairlines. The 8% alpha is the visual
+   * fingerprint of the system; do not strengthen except for
+   * focus/active states (where you use the accent color instead). */
+  --hairline:    rgba(255, 255, 255, 0.08);
+  --hairline-2:  rgba(255, 255, 255, 0.04); /* sub-divider, even fainter */
+
+  /* Text. Never pure white. */
+  --text-primary:  #e8e8e8;
+  --text-secondary:#a0a4ab; /* mid-tone for body secondaries */
+  --text-muted:    #8c8c8c; /* labels, helper text */
+  --text-dim:      #525252; /* disabled, deeply de-emphasized */
+
+  /* Accent palette — legendary gold is THE color. Used sparingly. */
+  --gold:        #ceae33; /* legendary / primary action / god roll */
+  --gold-warm:   #b4a03c; /* exotic variant of gold (subtle drift) */
+  --gold-pale:   #e8d57a; /* hover/highlight tint */
+  --gold-dim:    rgba(206, 174, 51, 0.12);  /* fill at rest */
+  --gold-hover:  rgba(206, 174, 51, 0.20);  /* fill on hover */
+  --gold-line:   rgba(206, 174, 51, 0.55);  /* 1px line, top-accent */
+
+  /* Status — muted, atmospheric, never neon. */
+  --keep:        #5a9e6f; /* keep / good roll */
+  --keep-dim:    rgba(90, 158, 111, 0.14);
+  --shard:       #c23a3a; /* shard / trash */
+  --shard-dim:   rgba(194, 58, 58, 0.14);
+
+  /* Exotic — warm gold drift. Destiny canon: exotic rarity is YELLOW, not
+   * purple. We keep it in the gold family but warmer/more saturated than
+   * the action gold above, so an Exotic chip reads as related-but-distinct
+   * from a god-roll keeper. */
+  --exotic:      #d4af37; /* exotic yellow — brighter, warmer than action gold */
+  --exotic-dim:  rgba(212, 175, 55, 0.16);
+  --exotic-line: rgba(212, 175, 55, 0.55);
+
+  /* "Neutral" left-accent for ordinary entries. */
+  --neutral-line: rgba(255, 255, 255, 0.15);
+
+  /* ---------- 2. TYPE ---------- */
+  --font-ui:
+    'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Scale — UI sits between 10 and 18px. */
+  --t-10: 10px;
+  --t-11: 11px;
+  --t-12: 12px;
+  --t-13: 13px;
+  --t-14: 14px;
+  --t-16: 16px;
+  --t-18: 18px;
+
+  /* Weights — Destiny chrome is LIGHT. 300 for headers, 400 for body,
+   * 500 only for emphasis (locked, god-roll). 600+ never. */
+  --fw-light:   300;
+  --fw-regular: 400;
+  --fw-medium:  500;
+
+  /* Tracking — the signature Destiny feel is wide-tracked uppercase. */
+  --track-wide:     0.10em;
+  --track-widest:   0.15em;
+  --track-headline: 0.22em; /* hero / section start of frame */
+
+  /* ---------- 3. SHAPE + SPACE ---------- */
+  /* Cryptarch redesigned has NO rounding above 2px. */
+  --radius-none: 0;
+  --radius-sm:   2px;
+
+  --stroke-hairline: 1px;
+  --stroke-accent:   1px; /* top-accent on cards is still 1px — strength is in COLOR */
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+
+  /* Popup is 400×600 (per brief). Dashboard centers in 1120 max. */
+  --w-popup:    400px;
+  --w-dash-max: 1120px;
+}
+
+/* ---------- 4. BASE STYLES ---------- */
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-weight: var(--fw-regular);
+  font-size: var(--t-14);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+
+/* ---------- 5. TYPE PRIMITIVES ----------
+ * Headlines are uppercase, light-weight, tracked-out. Body is normal case.
+ * Never use bold for headings. */
+.crypt-h1,
+.crypt-headline {
+  font-size: var(--t-18);
+  font-weight: var(--fw-light);
+  text-transform: uppercase;
+  letter-spacing: var(--track-headline);
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1.2;
+}
+.crypt-h2 {
+  font-size: var(--t-14);
+  font-weight: var(--fw-light);
+  text-transform: uppercase;
+  letter-spacing: var(--track-widest);
+  color: var(--text-primary);
+  margin: 0;
+}
+/* Section header — small uppercase muted label with optional trailing
+ * hairline. Apply to a flex row containing the label + a divider span. */
+.crypt-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  font-size: var(--t-11);
+  font-weight: var(--fw-regular);
+  text-transform: uppercase;
+  letter-spacing: var(--track-widest);
+  color: var(--text-muted);
+}
+.crypt-section-head::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+.crypt-body  { font-size: var(--t-14); line-height: 1.5; color: var(--text-primary); }
+.crypt-meta  { font-size: var(--t-11); color: var(--text-muted); letter-spacing: var(--track-wide); text-transform: uppercase; }
+.crypt-mono  { font-family: var(--font-mono); font-size: var(--t-12); }
+
+/* ---------- 6. CARD WITH TOP ACCENT ----------
+ * Cards are dark panels with optional thin colored top line. Use the
+ * data-accent attribute or one of the modifier classes for color. */
+.crypt-card {
+  background: var(--bg-deep);
+  border: var(--stroke-hairline) solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: var(--s-5);
+  position: relative;
+}
+.crypt-card--accent::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: var(--accent-line, var(--gold-line));
+}
+.crypt-card--gold    { --accent-line: var(--gold-line); }
+.crypt-card--exotic  { --accent-line: var(--exotic-line); }
+.crypt-card--neutral { --accent-line: var(--neutral-line); }
+
+/* ---------- 7. NOTIFICATION ROW (LEFT-ACCENT) ----------
+ * Notification cards in popup use a thin left-border accent instead of a
+ * top accent — gold for god rolls, exotic-purple for exotics, neutral
+ * grey for everything else. */
+.crypt-notif {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg-deep);
+  border-left: 2px solid var(--neutral-line);
+  position: relative;
+}
+.crypt-notif--gold   { border-left-color: var(--gold); background: linear-gradient(90deg, var(--gold-dim) 0%, transparent 30%); }
+.crypt-notif--exotic { border-left-color: var(--exotic); background: linear-gradient(90deg, var(--exotic-dim) 0%, transparent 30%); }
+
+/* ---------- 8. CHIP / GRADE BADGE ----------
+ * Angular, sharp-cornered. The grade badge variant uses background fill
+ * for at-a-glance scanability; chips use thin border + transparent. */
+.crypt-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px var(--s-2);
+  font-size: var(--t-10);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: var(--track-wide);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-none);
+  white-space: nowrap;
+}
+.crypt-chip--gold    { color: var(--gold);   border-color: var(--gold-line); }
+.crypt-chip--exotic  { color: var(--exotic); border-color: var(--exotic-line); }
+.crypt-chip--keep    { color: var(--keep);   border-color: rgba(90,158,111,0.55); }
+.crypt-chip--shard   { color: var(--shard);  border-color: rgba(194,58,58,0.55); }
+.crypt-chip--active  { background: var(--gold-dim); color: var(--gold); border-color: var(--gold-line); }
+
+/* Grade BADGE — filled, sized to read across the row. */
+.crypt-grade {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  height: 28px;
+  padding: 0 var(--s-3);
+  font-size: var(--t-10);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: var(--track-widest);
+  /* angular slash — clip-path gives an angled right edge */
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 0 100%);
+  padding-right: calc(var(--s-3) + 8px);
+}
+.crypt-grade--god   { background: var(--gold-dim);   color: var(--gold); }
+.crypt-grade--keep  { background: var(--keep-dim);   color: var(--keep); }
+.crypt-grade--shard { background: var(--shard-dim);  color: var(--shard); }
+.crypt-grade--exotic{ background: var(--exotic-dim); color: var(--exotic); }
+
+/* ---------- 9. BUTTON ---------- */
+.crypt-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 8px var(--s-4);
+  font-family: inherit;
+  font-size: var(--t-11);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: var(--track-widest);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-none);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.crypt-btn:hover    { color: var(--text-primary); border-color: rgba(255,255,255,0.20); background: var(--bg-elevated); }
+.crypt-btn--primary { color: var(--gold); border-color: var(--gold-line); background: var(--gold-dim); }
+.crypt-btn--primary:hover { background: var(--gold-hover); color: var(--gold-pale); border-color: var(--gold); }
+.crypt-btn--danger  { color: var(--shard); border-color: rgba(194,58,58,0.55); }
+.crypt-btn--danger:hover { background: var(--shard-dim); color: var(--shard); }
+
+/* ---------- 10. TOGGLE SWITCH (ANGULAR) ----------
+ * Two abutted angular slots with a single filled cell indicating state.
+ * Looks like a Destiny menu indicator, not iOS. */
+.crypt-toggle {
+  display: inline-grid;
+  grid-template-columns: 32px 32px;
+  height: 22px;
+  border: 1px solid var(--hairline);
+  background: var(--bg-pressed);
+  cursor: pointer;
+  font-family: inherit;
+}
+.crypt-toggle__cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--t-10);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: var(--track-wide);
+  color: var(--text-dim);
+  border-right: 1px solid var(--hairline);
+}
+.crypt-toggle__cell:last-child { border-right: 0; }
+.crypt-toggle__cell--on  { background: var(--gold-dim); color: var(--gold); }
+.crypt-toggle__cell--off { background: var(--bg-elevated); color: var(--text-secondary); }
+
+/* ---------- 11. INPUT ---------- */
+.crypt-input {
+  width: 100%;
+  padding: 8px var(--s-3);
+  font-family: inherit;
+  font-size: var(--t-13);
+  color: var(--text-primary);
+  background: var(--bg-pressed);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-none);
+}
+.crypt-input:focus { outline: none; border-color: var(--gold-line); }
+
+/* ---------- 12. CHEVRON / DIVIDERS ---------- */
+.crypt-chevron::after { content: '›'; margin-left: var(--s-2); color: var(--text-muted); font-weight: var(--fw-light); }
+.crypt-divider { height: 1px; background: var(--hairline); border: 0; margin: 0; }
+
+/* Scrollbar — dark, narrow, no rounding. */
+.crypt-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.crypt-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); }
+.crypt-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+.crypt-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- 13. ATMOSPHERIC LAYER ----------
+ * Sacred-geometry pattern based on D2's main-menu loading screen:
+ * nested pentagons at alternating rotations, vertex-connecting radial
+ * lines, cardinal cross-hairs, tessellation hints at tile edges.
+ * 480×480 tile at 0.04 opacity, drifting via background-position. */
+.crypt-starfield {
+  position: relative;
+  background-color: var(--bg-base);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='480' height='480' viewBox='0 0 480 480'><g fill='none' stroke='%23ffffff' stroke-width='0.5' opacity='0.04'><polygon points='240.0,210.0 268.5,230.7 257.6,264.3 222.4,264.3 211.5,230.7' /><polygon points='272.3,195.5 292.3,257.0 240.0,295.0 187.7,257.0 207.7,195.5' /><polygon points='240.0,150.0 325.6,212.2 292.9,312.8 187.1,312.8 154.4,212.2' /><polygon points='322.3,126.7 373.1,283.3 240.0,380.0 106.9,283.3 157.7,126.7' /><polygon points='240.0,40.0 430.2,178.2 357.3,396.2 122.7,396.2 49.8,178.2' /><line x1='240.0' y1='20.0' x2='240.0' y2='460.0' /><line x1='20.0' y1='240.0' x2='460.0' y2='240.0' /><line x1='240.0' y1='18.0' x2='240.0' y2='462.0' /><line x1='449.2' y1='169.9' x2='30.8' y2='310.1' /><line x1='369.3' y1='385.8' x2='110.7' y2='94.2' /><line x1='110.7' y1='385.8' x2='369.3' y2='94.2' /><line x1='30.8' y1='169.9' x2='449.2' y2='310.1' /><line x1='272.3' y1='195.5' x2='187.7' y2='257.0' /><line x1='292.3' y1='257.0' x2='207.7' y2='195.5' /><line x1='240.0' y1='295.0' x2='240.0' y2='195.5' /><line x1='187.7' y1='257.0' x2='292.3' y2='257.0' /><line x1='207.7' y1='195.5' x2='272.3' y2='295.0' /><polygon points='0.0,-30.0 28.5,-9.3 17.6,24.3 -17.6,24.3 -28.5,-9.3' /><polygon points='480.0,-30.0 508.5,-9.3 497.6,24.3 462.4,24.3 451.5,-9.3' /><polygon points='0.0,450.0 28.5,470.7 17.6,504.3 -17.6,504.3 -28.5,470.7' /><polygon points='480.0,450.0 508.5,470.7 497.6,504.3 462.4,504.3 451.5,470.7' /><polygon points='32.3,195.5 52.3,257.0 0.0,295.0 -52.3,257.0 -32.3,195.5' /><polygon points='512.3,195.5 532.3,257.0 480.0,295.0 427.7,257.0 447.7,195.5' /><polygon points='272.3,-44.5 292.3,17.0 240.0,55.0 187.7,17.0 207.7,-44.5' /><polygon points='272.3,435.5 292.3,497.0 240.0,535.0 187.7,497.0 207.7,435.5' /></g></svg>");
+  background-repeat: repeat;
+  animation: crypt-starfield-drift 90s linear infinite;
+}
+@keyframes crypt-starfield-drift {
+  from { background-position: 0 0; }
+  to   { background-position: 480px 480px; }
+}
+
+/* ---------- 14. RETICLE CURSOR ----------
+ * D2's cursor: a luminous donut ring — thick stroke, soft edges, hollow
+ * center. We use multi-stroke SVGs (no gradients — those fail in cursor
+ * contexts in many browsers). Uses !important to beat inline styles. */
+* {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26'><circle cx='13' cy='13' r='8' fill='none' stroke='white' stroke-opacity='0.15' stroke-width='6'/><circle cx='13' cy='13' r='8' fill='none' stroke='white' stroke-opacity='0.65' stroke-width='3'/><circle cx='13' cy='13' r='8' fill='none' stroke='white' stroke-opacity='0.3' stroke-width='1'/></svg>") 13 13, auto !important;
+}
+button, a, [role="button"], input, select, textarea, label,
+[onclick], [data-pointer] {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30'><circle cx='15' cy='15' r='9' fill='none' stroke='%23ceae33' stroke-opacity='0.15' stroke-width='7'/><circle cx='15' cy='15' r='9' fill='none' stroke='%23ceae33' stroke-opacity='0.8' stroke-width='3'/><circle cx='15' cy='15' r='9' fill='none' stroke='%23e8d57a' stroke-opacity='0.25' stroke-width='1'/></svg>") 15 15, auto !important;
+}
+
+/* ---------- 15. CHEVRON-BRACKETED PRIMARY BUTTON ----------
+ * destiny2.com CTA treatment: filled-triangle chevrons ▶▶ / ◀◀ flanking
+ * the label, with a semi-transparent gold background fill. */
+.crypt-bracket-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: 12px var(--s-6);
+  font-family: inherit;
+  font-size: var(--t-12);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: var(--track-widest);
+  color: var(--gold);
+  background: var(--gold-dim);
+  border: 1px solid var(--gold-line);
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.crypt-bracket-btn:hover {
+  background: var(--gold-hover);
+  color: var(--gold-pale);
+  border-color: var(--gold);
+}
+/* Filled triangle chevrons — ▶▶ pointing inward toward the text */
+.crypt-bracket-btn::before {
+  content: '▶▶';
+  font-size: 8px;
+  letter-spacing: -1px;
+  color: var(--gold);
+  opacity: 0.75;
+}
+.crypt-bracket-btn::after {
+  content: '◀◀';
+  font-size: 8px;
+  letter-spacing: -1px;
+  color: var(--gold);
+  opacity: 0.75;
+}
+
+/* ---------- 16. DECORATIVE DIVIDER ----------
+ * Primary section breaks: a hairline with a small dot or diamond center
+ * mark. The dot variant matches D2's vendor-screen transition markers. */
+.crypt-divider-dot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+}
+.crypt-divider-dot::before,
+.crypt-divider-dot::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+.crypt-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--gold-line);
+  flex-shrink: 0;
+}
+.crypt-dot--dim { background: var(--hairline); }
+/* Diamond variant */
+.crypt-diamond {
+  width: 5px;
+  height: 5px;
+  transform: rotate(45deg);
+  background: transparent;
+  border: 1px solid var(--gold-line);
+  flex-shrink: 0;
+}
+.crypt-diamond--filled { background: var(--gold); border-color: var(--gold); }
+
+/* ---------- 17. CORNER TICK MARKS ----------
+ * Based on D2's triumph/seal cards: small tick/dash marks at the four
+ * corners of a panel — NOT full L-brackets. Each tick is a short 8px
+ * line segment sitting at the corner. Subtle framing. */
+.crypt-corners { position: relative; }
+.crypt-corners::before,
+.crypt-corners::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+/* Top-left and top-right: short horizontal tick marks */
+.crypt-corners::before {
+  top: -1px; left: 0;
+  width: 100%;
+  height: 0;
+  border: none;
+  /* We use box-shadow to create four tick marks at once */
+  box-shadow:
+    0 0 0 0 transparent,
+    /* TL horizontal */ -1px 0 0 0 var(--gold-line),
+    /* TR horizontal */ calc(100% - 7px) 0 0 0 var(--gold-line);
+}
+/* Use a sub-element approach for clean four-corner ticks */
+.crypt-corners > .crypt-tick--tl,
+.crypt-corners > .crypt-tick--tr,
+.crypt-corners > .crypt-tick--bl,
+.crypt-corners > .crypt-tick--br {
+  position: absolute;
+  width: 8px;
+  height: 1px;
+  background: var(--gold-line);
+  pointer-events: none;
+}
+.crypt-corners > .crypt-tick--tl { top: -1px; left: -1px; }
+.crypt-corners > .crypt-tick--tr { top: -1px; right: -1px; }
+.crypt-corners > .crypt-tick--bl { bottom: -1px; left: -1px; }
+.crypt-corners > .crypt-tick--br { bottom: -1px; right: -1px; }
+/* Vertical ticks — append as data-attr-driven pseudo or extra spans */
+.crypt-corners > .crypt-vtick--tl,
+.crypt-corners > .crypt-vtick--tr,
+.crypt-corners > .crypt-vtick--bl,
+.crypt-corners > .crypt-vtick--br {
+  position: absolute;
+  width: 1px;
+  height: 8px;
+  background: var(--gold-line);
+  pointer-events: none;
+}
+.crypt-corners > .crypt-vtick--tl { top: -1px; left: -1px; }
+.crypt-corners > .crypt-vtick--tr { top: -1px; right: -1px; }
+.crypt-corners > .crypt-vtick--bl { bottom: -1px; left: -1px; }
+.crypt-corners > .crypt-vtick--br { bottom: -1px; right: -1px; }
+
+/* ---------- 18. ACTIVE-TAB GLOW + TEXT HOVER ----------
+ * Gold luminance on the active tab text. The active tab also uses a
+ * gold 1px underline — the text-shadow adds a faint halo that makes
+ * it feel lit from behind. */
+.crypt-tab-active {
+  color: var(--gold);
+  text-shadow: 0 0 8px rgba(206, 174, 51, 0.45);
+}
+.crypt-link-hover {
+  transition: color 120ms ease;
+}
+.crypt-link-hover:hover {
+  color: var(--gold-pale);
+}

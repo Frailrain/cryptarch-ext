@@ -48,6 +48,10 @@ export interface DestinyCharacter {
   classType: number;
   classHash: number;
   emblemPath: string;
+  // Wide horizontal background strip — Bungie returns this alongside
+  // emblemPath in the Characters component response. Used by the popup's
+  // Guardian strip background.
+  emblemBackgroundPath?: string;
   light: number;
 }
 

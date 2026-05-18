@@ -1,5 +1,5 @@
 import type { DiagnosticSocketDump, NewItemDrop } from '@/shared/types';
-import type { ManifestCache } from '@/core/bungie/manifest';
+import { iterateItems } from '@/core/bungie/manifest';
 import { warn } from '@/adapters/logger';
 import type { ArmorClass, ArmorRoll, ArmorSlot, ArmorStat } from './types';
 
@@ -162,44 +162,46 @@ export function parseArmorRoll(drop: NewItemDrop): ArmorRoll {
 
 const ARMOR_ARCHETYPE_SOCKET_TYPE_HASH = 2104613635;
 
-export function listArmorSets(manifest: ManifestCache): string[] {
-  const items = manifest.definitions.DestinyInventoryItemDefinition;
+// Brief #25: switched from `manifest: ManifestCache` parameter (which held
+// the full ~300 MB Record in JS) to an IDB cursor scan via `iterateItems`.
+// One item at a time streams through the callback; only the small `seen`
+// Set persists across iterations.
+export async function listArmorSets(): Promise<string[]> {
   const seen = new Set<string>();
   let sawExotic = false;
-  for (const def of Object.values(items)) {
-    if (def.itemType !== 2) continue; // Armor only
+  await iterateItems((def) => {
+    if (def.itemType !== 2) return; // Armor only
     const tier = def.inventory?.tierType;
     if (tier === 6) {
       // Exotic armor contributes a single "Exotic" pseudo-set that rules can
       // target to cover any exotic regardless of its specific item name.
       sawExotic = true;
-      continue;
+      return;
     }
-    if (tier !== 5) continue; // Legendary
+    if (tier !== 5) return; // Legendary
     const socketEntries = def.sockets?.socketEntries;
-    if (!socketEntries) continue;
+    if (!socketEntries) return;
     const isArmor3 = socketEntries.some(
       (e) => e.socketTypeHash === ARMOR_ARCHETYPE_SOCKET_TYPE_HASH,
     );
-    if (!isArmor3) continue;
+    if (!isArmor3) return;
     const name = def.displayProperties?.name;
-    if (!name) continue;
+    if (!name) return;
     const setName = stripSuffix(name);
     if (setName) seen.add(setName);
-  }
+  });
   const out = Array.from(seen).sort((a, b) => a.localeCompare(b));
   if (sawExotic) out.unshift('Exotic');
   return out;
 }
 
-export function listArmorArchetypes(manifest: ManifestCache): string[] {
-  const items = manifest.definitions.DestinyInventoryItemDefinition;
+export async function listArmorArchetypes(): Promise<string[]> {
   const seen = new Set<string>();
-  for (const def of Object.values(items)) {
-    if (def.plug?.plugCategoryIdentifier !== ARMOR_ARCHETYPE_PCID) continue;
+  await iterateItems((def) => {
+    if (def.plug?.plugCategoryIdentifier !== ARMOR_ARCHETYPE_PCID) return;
     const name = def.displayProperties?.name;
     if (name) seen.add(name);
-  }
+  });
   return Array.from(seen).sort((a, b) => a.localeCompare(b));
 }
 

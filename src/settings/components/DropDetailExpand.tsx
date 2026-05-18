@@ -96,19 +96,19 @@ export function DropDetailExpand({ entry }: { entry: DropFeedEntry }) {
     entry.manifestVersion !== currentVersion;
 
   return (
-    <div className="border-t border-bg-border/50 mt-2.5 pt-3 px-2 pb-2 space-y-3">
+    <div className="border-t border-d-hairline mt-2.5 pt-3 px-2 pb-2 space-y-3">
       {state.kind === 'loading' && (
-        <div className="text-xs text-text-muted">Loading perk details…</div>
+        <div className="text-d-11 text-d-text-muted">Loading perk details…</div>
       )}
 
       {state.kind === 'no-data' && (
-        <div className="text-xs text-text-muted">
+        <div className="text-d-11 text-d-text-muted">
           No random-roll perk pool for this item.
         </div>
       )}
 
       {state.kind === 'error' && (
-        <div className="text-xs text-red-400">
+        <div className="text-d-11 text-d-shard">
           Couldn&apos;t load perk details: {state.message}
         </div>
       )}
@@ -137,7 +137,7 @@ export function DropDetailExpand({ entry }: { entry: DropFeedEntry }) {
       />
 
       {showVersionDisclaimer && (
-        <div className="text-[10px] text-text-muted pt-1">
+        <div className="text-d-10 text-d-text-muted uppercase tracking-d-wide pt-1">
           Captured against manifest v{entry.manifestVersion}. Current sandbox may differ.
         </div>
       )}
@@ -171,14 +171,14 @@ function WishlistNoteSection({
     <>
       {primary.length > 0 && <NoteGroupList matches={primary} />}
       {voltron.length > 0 && (
-        <div className="border-l-2 border-rahool-blue/40 pl-3 mt-2 space-y-1">
-          <div className="text-[11px] font-medium text-text-muted flex items-center gap-1.5">
-            <ThumbsUp size={11} className="text-rahool-blue/80" />
+        <div className="border-l-2 border-d-gold-line pl-3 mt-2 space-y-1">
+          <div className="text-d-11 font-medium text-d-text-muted flex items-center gap-1.5 uppercase tracking-d-wide">
+            <ThumbsUp size={11} className="text-d-gold-pale" />
             Voltron community keepers also flagged this roll
           </div>
           {dedupeMatchesByNote(voltron).map((group) => (
-            <div key={group.sourceNames.join('|')} className="text-xs text-text-muted">
-              <span className="text-rahool-blue/70">{group.sourceNames.join(' · ')}</span>
+            <div key={group.sourceNames.join('|')} className="text-d-11 text-d-text-muted">
+              <span className="text-d-gold-pale">{group.sourceNames.join(' · ')}</span>
               {group.note && <span className="ml-2 italic">{group.note}</span>}
             </div>
           ))}
@@ -190,12 +190,12 @@ function WishlistNoteSection({
 
 function NoteGroupList({ matches }: { matches: WishlistMatch[] }) {
   return (
-    <div className="space-y-1 pt-2 border-t border-bg-border/30">
+    <div className="space-y-1 pt-2 border-t border-d-hairline">
       {dedupeMatchesByNote(matches).map((group) => (
-        <div key={group.sourceNames.join('|')} className="text-xs text-text-muted">
-          <span className="text-rahool-blue">{group.sourceNames.join(' · ')}</span>
+        <div key={group.sourceNames.join('|')} className="text-d-11 text-d-text-muted">
+          <span className="text-d-gold">{group.sourceNames.join(' · ')}</span>
           {group.tier && (
-            <span className="ml-2 text-[10px] uppercase">Tier {group.tier}</span>
+            <span className="ml-2 text-d-10 uppercase tracking-d-wide">Tier {group.tier}</span>
           )}
           {group.note && <span className="ml-2 italic">{group.note}</span>}
         </div>
@@ -235,7 +235,7 @@ function ExpandedColumns({
 function ExpandedColumnRow({ column }: { column: PerkColumnDisplayModel }) {
   return (
     <div className="space-y-1">
-      <div className="text-[11px] uppercase tracking-[0.06em] text-text-muted">
+      <div className="text-d-10 uppercase tracking-d-wide text-d-text-muted">
         {column.label}
       </div>
       <div

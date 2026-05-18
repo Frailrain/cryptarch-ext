@@ -1,6 +1,11 @@
+// Brief #23 Phase C — Destiny-native armor rule editor. Renders inside the
+// Armor tab's Panel surface (chrome from Settings.tsx); this file's outer
+// container is plain space-y so the editor sits flush within the Panel.
+
 import { useMemo, useState } from 'react';
 import { type ArmorRule, summarizeRule } from '@/core/rules/armor-rules';
 import type { ArmorTaxonomyPayload } from '@/shared/types';
+import { BracketBtn, Btn, Chip, Headline, SectionHead } from '@/components/destiny';
 
 type AnyClass = 'any' | 'Titan' | 'Hunter' | 'Warlock';
 
@@ -54,41 +59,39 @@ export function ArmorRuleEditor({ rule, taxonomy, onSave, onCancel }: ArmorRuleE
   };
 
   return (
-    <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-5">
+    <div className="space-y-5">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-base font-medium text-text-primary">
-          {rule.name || 'New armor rule'}
-        </h2>
-        <span className="text-xs text-text-muted">Armor</span>
+        <Headline size="md">{rule.name || 'New armor rule'}</Headline>
+        <span className="text-d-9 uppercase tracking-d-wide text-d-text-muted">Armor</span>
       </div>
 
-      <Section label="Name (optional)">
+      <Field label="Name (optional)">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={autoSummary}
-          className="w-full px-3 py-1.5 text-sm rounded bg-bg-primary border border-bg-border text-text-primary"
+          className="w-full px-3 py-2 text-d-12 bg-d-bg-pressed border border-d-hairline text-d-text placeholder:text-d-text-muted focus:outline-none focus:border-d-gold-line transition-colors duration-d-fast"
         />
-        <p className="text-xs text-text-muted mt-1">
+        <Hint>
           Leave blank to use auto-summary:{' '}
-          <span className="font-mono">{autoSummary}</span>
-        </p>
-      </Section>
+          <span className="font-mono text-d-text-sec">{autoSummary}</span>
+        </Hint>
+      </Field>
 
-      <Section label="Class">
-        <RadioRow
+      <Field label="Class">
+        <ChipPicker
           options={['any', 'Titan', 'Hunter', 'Warlock'] as AnyClass[]}
           value={cls}
           onChange={setCls}
         />
-      </Section>
+      </Field>
 
-      <Section label={`Armor sets (${sets.length} selected)`}>
+      <Field label={`Armor sets · ${sets.length} selected`}>
         <input
           placeholder="Filter sets…"
           value={setSearch}
           onChange={(e) => setSetSearch(e.target.value)}
-          className="w-full px-3 py-1.5 text-sm rounded bg-bg-primary border border-bg-border text-text-primary mb-2"
+          className="w-full px-3 py-2 text-d-12 bg-d-bg-pressed border border-d-hairline text-d-text placeholder:text-d-text-muted focus:outline-none focus:border-d-gold-line transition-colors duration-d-fast mb-2"
         />
         {taxonomy ? (
           <CheckList
@@ -98,12 +101,12 @@ export function ArmorRuleEditor({ rule, taxonomy, onSave, onCancel }: ArmorRuleE
             emptyMessage={setSearch ? 'No sets match the search.' : 'Manifest loading…'}
           />
         ) : (
-          <div className="text-xs text-text-muted italic">Loading sets from manifest…</div>
+          <Hint italic>Loading sets from manifest…</Hint>
         )}
-        <p className="text-xs text-text-muted mt-1">Empty = any set.</p>
-      </Section>
+        <Hint>Empty = any set.</Hint>
+      </Field>
 
-      <Section label={`Archetypes (${archetypes.length} selected)`}>
+      <Field label={`Archetypes · ${archetypes.length} selected`}>
         {taxonomy ? (
           <CheckList
             options={taxonomy.archetypes}
@@ -112,86 +115,90 @@ export function ArmorRuleEditor({ rule, taxonomy, onSave, onCancel }: ArmorRuleE
             emptyMessage="No archetypes found in manifest."
           />
         ) : (
-          <div className="text-xs text-text-muted italic">Loading archetypes…</div>
+          <Hint italic>Loading archetypes…</Hint>
         )}
-        <p className="text-xs text-text-muted mt-1">Empty = any archetype.</p>
-      </Section>
+        <Hint>Empty = any archetype.</Hint>
+      </Field>
 
-      <Section label={`Tertiary stats (${tertiaries.length} selected)`}>
+      <Field label={`Tertiary stats · ${tertiaries.length} selected`}>
         <CheckList
           options={taxonomy?.tertiaries ?? ['Weapons', 'Health', 'Grenade', 'Super', 'Class', 'Melee']}
           selected={tertiaries}
           onChange={setTertiaries}
           emptyMessage=""
         />
-        <p className="text-xs text-text-muted mt-1">Empty = any tertiary.</p>
-      </Section>
+        <Hint>Empty = any tertiary.</Hint>
+      </Field>
 
-      <Section label="Minimum tier">
-        <RadioRow
+      <Field label="Minimum tier">
+        <ChipPicker
           options={[5, 4] as (4 | 5)[]}
           value={minTier}
           labelFor={(v) => `Tier ${v}+`}
           onChange={setMinTier}
         />
-      </Section>
+      </Field>
 
       {matchesEverything && (
-        <div className="rounded border border-amber-500/40 bg-amber-500/10 text-amber-200 text-xs px-3 py-2">
-          This rule will match every Tier {minTier}+ armor drop.
+        <div className="border border-d-gold-line bg-d-gold-dim text-d-gold text-d-11 px-3 py-2 uppercase tracking-d-wide">
+          ⚠ This rule will match every Tier {minTier}+ armor drop.
         </div>
       )}
 
-      <div className="flex gap-2 pt-1 border-t border-bg-border">
-        <button
-          onClick={handleSave}
-          className="px-4 py-1.5 text-sm rounded bg-rahool-blue/20 text-rahool-blue border border-rahool-blue/40 hover:bg-rahool-blue/30"
-        >
-          Save rule
-        </button>
-        <button
-          onClick={onCancel}
-          className="px-3 py-1.5 text-sm rounded border border-bg-border text-text-muted hover:text-text-primary"
-        >
+      <div className="flex gap-2 pt-3 border-t border-d-hairline">
+        <BracketBtn small onClick={handleSave}>
+          Save Rule
+        </BracketBtn>
+        <Btn variant="ghost" small onClick={onCancel}>
           Cancel
-        </button>
+        </Btn>
       </div>
     </div>
   );
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="text-sm text-text-primary mb-2">{label}</div>
+    <div className="space-y-2">
+      <SectionHead>{label}</SectionHead>
       {children}
     </div>
   );
 }
 
-function RadioRow<T extends string | number>(props: {
+function Hint({
+  children,
+  italic = false,
+}: {
+  children: React.ReactNode;
+  italic?: boolean;
+}) {
+  return (
+    <div className={`text-d-10 text-d-text-muted mt-1 ${italic ? 'italic' : ''}`}>
+      {children}
+    </div>
+  );
+}
+
+function ChipPicker<T extends string | number>(props: {
   options: T[];
   value: T;
   onChange: (v: T) => void;
   labelFor?: (v: T) => string;
 }) {
   return (
-    <div className="flex gap-1 flex-wrap">
+    <div className="flex gap-1.5 flex-wrap">
       {props.options.map((opt) => {
-        const active = props.value === opt;
         const label = props.labelFor ? props.labelFor(opt) : String(opt);
         return (
-          <button
+          <Chip
             key={String(opt)}
+            active={props.value === opt}
+            color="gold"
             onClick={() => props.onChange(opt)}
-            className={`px-3 py-1 text-sm rounded border ${
-              active
-                ? 'bg-rahool-blue/20 text-rahool-blue border-rahool-blue/40'
-                : 'bg-bg-primary text-text-muted border-bg-border hover:text-text-primary'
-            }`}
           >
             {label}
-          </button>
+          </Chip>
         );
       })}
     </div>
@@ -206,30 +213,24 @@ function CheckList(props: {
 }) {
   const { options, selected, onChange, emptyMessage } = props;
   if (options.length === 0) {
-    return <div className="text-xs text-text-muted italic py-2">{emptyMessage}</div>;
+    return <div className="text-d-10 text-d-text-muted italic py-2">{emptyMessage}</div>;
   }
   const toggle = (value: string) => {
     if (selected.includes(value)) onChange(selected.filter((v) => v !== value));
     else onChange([...selected, value]);
   };
   return (
-    <div className="max-h-48 overflow-auto flex flex-wrap gap-1 rounded border border-bg-border bg-bg-primary p-2">
-      {options.map((opt) => {
-        const active = selected.includes(opt);
-        return (
-          <button
-            key={opt}
-            onClick={() => toggle(opt)}
-            className={`px-2 py-1 text-xs rounded border ${
-              active
-                ? 'bg-rahool-blue/20 text-rahool-blue border-rahool-blue/40'
-                : 'bg-bg-card text-text-muted border-bg-border hover:text-text-primary'
-            }`}
-          >
-            {opt}
-          </button>
-        );
-      })}
+    <div className="max-h-48 overflow-auto d-scroll flex flex-wrap gap-1 border border-d-hairline bg-d-bg-pressed p-2">
+      {options.map((opt) => (
+        <Chip
+          key={opt}
+          active={selected.includes(opt)}
+          color="gold"
+          onClick={() => toggle(opt)}
+        >
+          {opt}
+        </Chip>
+      ))}
     </div>
   );
 }

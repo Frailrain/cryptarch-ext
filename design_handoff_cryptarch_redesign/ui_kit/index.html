@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Cryptarch · Extension UI Kit</title>
+  <link rel="stylesheet" href="../../colors_and_type.css">
+  <style>
+    /* ── Animations ── */
+    @keyframes sacredDrift {
+      from { background-position: 0 0; }
+      to   { background-position: 480px 480px; }
+    }
+    @keyframes shimmer {
+      0%   { left: -100%; }
+      50%  { left: 200%; }
+      100% { left: 200%; }
+    }
+
+    /* ── Layout ── */
+    body {
+      background: #0c0e11;
+      margin: 0; padding: 0; min-height: 100vh;
+    }
+    .stage {
+      max-width: 1580px; margin: 0 auto;
+      padding: 36px 28px 80px;
+      display: flex; flex-direction: column; gap: 36px;
+    }
+    .stage-title {
+      font-size: 12px; font-weight: 300; text-transform: uppercase;
+      letter-spacing: 0.25em; color: var(--text-muted);
+    }
+    .stage-sub {
+      font-size: 9px; color: var(--text-dim); text-transform: uppercase;
+      letter-spacing: 0.15em; font-family: var(--font-mono);
+    }
+
+    .surfaces {
+      display: grid; grid-template-columns: 400px 1fr;
+      gap: 36px; align-items: start;
+    }
+    @media (max-width: 1080px) { .surfaces { grid-template-columns: 1fr; } }
+
+    .surface-label {
+      display: flex; align-items: center; gap: 10; margin-bottom: 10;
+      font-size: 9px; color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.18em; font-weight: 500;
+    }
+    .surface-label::after { content: ''; flex: 1; height: 1px; background: var(--hairline); }
+
+    /* ── Faux browser chrome ── */
+    .chrome { background: #0c0e11; border: 1px solid var(--hairline); overflow: hidden; }
+    .chrome-bar {
+      display: flex; align-items: center; gap: 6; padding: 8px 10px;
+      border-bottom: 1px solid var(--hairline); background: #0f1114;
+    }
+    .chrome-dot { width: 8px; height: 8px; background: rgba(255,255,255,0.06); }
+    .chrome-url {
+      flex: 1; margin-left: 8px; padding: 3px 10px;
+      font-family: var(--font-mono); font-size: 10px; color: var(--text-dim);
+      background: #0c0e11; border: 1px solid var(--hairline);
+    }
+    .dash-scroll { max-height: 760px; overflow-y: auto; overflow-x: hidden; }
+
+    /* ── Divider between surfaces ── */
+    .stage-divider {
+      display: flex; align-items: center; gap: 10; padding: 0;
+    }
+    .stage-divider::before, .stage-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--hairline);
+    }
+    .stage-diamond {
+      width: 5px; height: 5px; transform: rotate(45deg);
+      border: 1px solid rgba(206,174,51,0.35); flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+<div class="stage">
+<div>
+    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px; padding-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.07);">
+      <div>
+        <div class="stage-title">CRYPTARCH · EXTENSION UI KIT</div>
+        <div style="font-size: 11px; color: #6b6e75; margin-top: 5px;">
+          Destiny-native redesign · popup + tabbed dashboard · interactive
+        </div>
+      </div>
+      <div class="stage-sub">V0.6.2 / CHROME MV3</div>
+    </div>
+  </div>
+
+  <div class="surfaces">
+<div>
+      <div class="surface-label">Popup · 400 × 600</div>
+      <div id="popup-mount"></div>
+    </div>
+<div>
+      <div class="surface-label">Dashboard · chrome-extension://…/settings</div>
+      <div class="chrome">
+        <div class="chrome-bar">
+          <span class="chrome-dot"></span><span class="chrome-dot"></span><span class="chrome-dot"></span>
+          <div class="chrome-url">chrome-extension://cryptarch/settings.html</div>
+        </div>
+        <div class="dash-scroll" id="dash-mount"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="components.jsx"></script>
+<script type="text/babel" src="Popup.jsx"></script>
+<script type="text/babel" src="Dashboard.jsx"></script>
+<script type="text/babel">
+  function App({ mount }) {
+    const [drops, setDrops] = React.useState(SAMPLE_DROPS);
+    const handleLock = (id) => setDrops(drops.map(d => d.id === id ? { ...d, locked: true } : d));
+
+    if (mount === 'popup') return <Popup drops={drops} onOpenDashboard={() => {}} />;
+    return <Dashboard drops={drops} onLock={handleLock} />;
+  }
+
+  ReactDOM.createRoot(document.getElementById('popup-mount')).render(<App mount="popup" />);
+  ReactDOM.createRoot(document.getElementById('dash-mount')).render(<App mount="dash" />);
+</script>
+</body>
+</html>

@@ -29,7 +29,7 @@ import {
   testFallback,
   testMatch,
 } from './debug-wishlists';
-import { getEnhancedPerkMap, getManifest, lookupItem } from '@/core/bungie/manifest';
+import { ensureManifestReady, getEnhancedPerkMap, lookupItem } from '@/core/bungie/manifest';
 import { appendToFeed, getFeedEntry, updateFeedLock } from '@/core/storage/drop-feed';
 import { setLockState } from '@/core/bungie/api';
 import { ItemType } from '@/shared/types';
@@ -58,6 +58,31 @@ import { scoreItem } from '@/core/scoring/engine';
 // is mid-flight, they share the same Promise so callers resolve together
 // rather than triggering parallel fetches.
 const refreshOneInFlight = new Map<string, Promise<unknown>>();
+
+// Test-path subtitle helpers (mirror controller.ts production capture). Kept
+// inline here because they're only used by the dev WishlistTestPanel paths;
+// production poll cycles capture damageType / weaponSlot directly off the
+// drop envelope via controller.ts.
+const DAMAGE_TYPE_NAMES: Record<number, string> = {
+  1: 'Kinetic',
+  2: 'Arc',
+  3: 'Solar',
+  4: 'Void',
+  6: 'Stasis',
+  7: 'Strand',
+};
+function damageTypeName(n: number | undefined | null): string | null {
+  if (typeof n !== 'number') return null;
+  return DAMAGE_TYPE_NAMES[n] ?? null;
+}
+function slotFromBucketHash(
+  hash: number | undefined | null,
+): 'Kinetic' | 'Energy' | 'Heavy' | null {
+  if (hash === 1498876634) return 'Kinetic';
+  if (hash === 2465295065) return 'Energy';
+  if (hash === 953998645) return 'Heavy';
+  return null;
+}
 
 async function ensurePollAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(POLL_ALARM_NAME);
@@ -283,59 +308,95 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         sendResponse({ ok: true, payload: taxonomy });
         return;
       }
-      if (import.meta.env.DEV && msg.type === 'wishlist-test-multi-source') {
+      if (import.meta.env.MODE === 'development' && msg.type === 'wishlist-test-multi-source') {
         // ensureWishlistCacheReady is also awaited inside findMultiSourceItems
         // and cacheSummary now, but call it here too so the diagnostic snapshot
         // below sees the same warm cache the discovery does.
         await ensureWishlistCacheReady();
-        // Brief #14 Part E redesign: prefer a real inventory weapon so the
-        // expand-on-click view renders against actual rolled perks (not perks
-        // synthesized from the wishlist's required-perk list, which may not
-        // correspond to any roll the user has ever owned). Falls back to the
-        // synthetic path if not signed in or no qualifying inventory weapon.
-        const fromInventory = await tryRealInventoryMultiSource();
-        if (fromInventory) {
-          appendTestDropToFeed(fromInventory.entry);
-          sendResponse({
-            ok: true,
-            payload: { ok: true, source: 'inventory', ...fromInventory.payload },
-          });
-          return;
+
+        // Brief #25.1 follow-up: when the dashboard requests a SPECIFIC tier,
+        // skip the inventory-first path (the user is testing the MinTier
+        // filter, not their loadout) and filter the candidate pool to that
+        // tier only. We also drop the minimum-source-count floor from 2 to 1
+        // for tier-specific tests — the question is "does the matcher emit
+        // a drop at this tier?" not "do multiple curators agree?"
+        const requestedTier = (msg.payload as { tier?: TierLetter } | undefined)?.tier;
+
+        if (!requestedTier) {
+          // Default flow: real-inventory-first when no tier is requested. If a
+          // qualifying weapon exists in the user's profile, prefer that — the
+          // expand-on-click view renders against actual rolled perks rather
+          // than perks synthesized from the wishlist entry.
+          const fromInventory = await tryRealInventoryMultiSource();
+          if (fromInventory) {
+            appendTestDropToFeed(fromInventory.entry);
+            sendResponse({
+              ok: true,
+              payload: { ok: true, source: 'inventory', ...fromInventory.payload },
+            });
+            return;
+          }
         }
-        // Pull a large pool of candidates so we can show variety across tiers.
-        // Each click of "Run multi-source test" buckets candidates by their
-        // best tier and picks a random non-empty bucket → random candidate.
-        // This exercises the tier filter naturally over a few clicks instead
-        // of always producing an S-tier drop.
-        const candidates = await findMultiSourceItems(2, 500);
+
+        const minSources = requestedTier ? 1 : 2;
+        const candidates = await findMultiSourceItems(minSources, 500);
         if (candidates.length === 0) {
           const summary = await cacheSummary();
           sendResponse({
             ok: true,
             payload: {
               ok: false,
-              message:
-                'No items found matching 2+ enabled sources. See diagnostic below to confirm the SW sees what you expect.',
+              message: requestedTier
+                ? `No candidates found in any enabled source. Refresh the Wishlists tab and try again.`
+                : 'No items found matching 2+ enabled sources. See diagnostic below to confirm the SW sees what you expect.',
               diagnostic: summary,
             },
           });
           return;
         }
-        const buckets = new Map<string, typeof candidates>();
-        for (const c of candidates) {
-          const key = c.bestTier ?? 'untiered';
-          const existing = buckets.get(key);
-          if (existing) existing.push(c);
-          else buckets.set(key, [c]);
+
+        let bucket: typeof candidates;
+        if (requestedTier) {
+          // Tier-forced path: filter to candidates whose resolved best-tier
+          // matches the request. Untiered candidates never qualify here —
+          // Charles always tier-tags, so a request for 'A' should not match
+          // a Voltron-only untiered entry.
+          bucket = candidates.filter((c) => c.bestTier === requestedTier);
+          if (bucket.length === 0) {
+            const summary = await cacheSummary();
+            sendResponse({
+              ok: true,
+              payload: {
+                ok: false,
+                message: `No ${requestedTier}-tier candidates in the wishlist cache. The MRF_PPC0 superset hasn't been fetched yet, or Charles hasn't flagged any ${requestedTier}-tier rolls that also match a second source. Try refreshing Charles via the Wishlists tab, or click the "Random" button instead.`,
+                diagnostic: summary,
+              },
+            });
+            return;
+          }
+        } else {
+          // Random-tier path (existing behavior): bucket all candidates by
+          // best-tier, pick a non-empty bucket at random, pick a candidate
+          // from that bucket. Spreads test coverage across tiers over a few
+          // clicks rather than always landing on the most-populated bucket.
+          const buckets = new Map<string, typeof candidates>();
+          for (const c of candidates) {
+            const key = c.bestTier ?? 'untiered';
+            const existing = buckets.get(key);
+            if (existing) existing.push(c);
+            else buckets.set(key, [c]);
+          }
+          const bucketKeys = Array.from(buckets.keys());
+          const pickedKey = bucketKeys[Math.floor(Math.random() * bucketKeys.length)];
+          bucket = buckets.get(pickedKey)!;
         }
-        const bucketKeys = Array.from(buckets.keys());
-        const pickedKey = bucketKeys[Math.floor(Math.random() * bucketKeys.length)];
-        const bucket = buckets.get(pickedKey)!;
         const candidate = bucket[Math.floor(Math.random() * bucket.length)];
         const outcome = await testMatch(candidate.itemHash, candidate.samplePerks);
         let itemName: string | null = null;
         let itemIcon = '';
         let weaponSubType: string | null = null;
+        let damageType: string | null = null;
+        let weaponSlot: 'Kinetic' | 'Energy' | 'Heavy' | null = null;
         const perkIcons: string[] = [];
         try {
           const def = await lookupItem(candidate.itemHash);
@@ -343,6 +404,8 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
           const iconPath = def?.displayProperties?.icon;
           if (iconPath) itemIcon = `https://www.bungie.net${iconPath}`;
           weaponSubType = def?.itemTypeDisplayName ?? null;
+          damageType = damageTypeName(def?.defaultDamageType);
+          weaponSlot = slotFromBucketHash(def?.inventory?.bucketTypeHash);
           // Look up icon URLs for the synthetic drop's perks so the test entry
           // renders the same way real drops do (up to 4 perk icons in the row).
           for (const perkHash of candidate.samplePerks.slice(0, 4)) {
@@ -359,6 +422,8 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
           itemName: itemName ? `[Test] ${itemName}` : `[Test] item ${candidate.itemHash}`,
           itemIcon,
           weaponType: weaponSubType,
+          damageType,
+          weaponSlot,
           wishlistMatches: outcome.wishlistMatches,
           perkIcons,
           perkHashes: candidate.samplePerks.slice(0, 4),
@@ -384,7 +449,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         });
         return;
       }
-      if (import.meta.env.DEV && msg.type === 'wishlist-test-fallback') {
+      if (import.meta.env.MODE === 'development' && msg.type === 'wishlist-test-fallback') {
         const outcome = await testFallback();
         appendTestDropToFeed({
           itemName: '[Test] Unrecognized legendary',
@@ -401,7 +466,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         });
         return;
       }
-      if (import.meta.env.DEV && msg.type === 'wishlist-test-armor') {
+      if (import.meta.env.MODE === 'development' && msg.type === 'wishlist-test-armor') {
         // Pull a random armor piece from the user's current Destiny inventory,
         // run it through scoreItem, append the result to the drop log. Calls
         // runPollCycle with an empty baseline so every current item comes back
@@ -443,7 +508,7 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
         config.armorRules = loadArmorRules();
         let perkMap = new Map<number, number>();
         try {
-          await getManifest();
+          await ensureManifestReady();
           perkMap = await getEnhancedPerkMap();
         } catch {
           // Manifest issues degrade weapon perk resolution; armor scoring is
@@ -505,12 +570,14 @@ chrome.runtime.onMessage.addListener((msg: Message, _sender, sendResponse) => {
 // since module-level state doesn't persist across teardown. See
 // debug-wishlists.ts for usage.
 //
-// Brief #22.1: dev-mode only — Vite replaces import.meta.env.DEV with a
-// literal at build time so prod builds drop the call (and Rollup
-// tree-shakes the entire debug-wishlists module + every cacheSummary /
-// findMultiSourceItems / testFallback / testMatch import that's now
-// unreachable).
-if (import.meta.env.DEV) {
+// Brief #22.1 + #25.1 fix: dev-mode only. `import.meta.env.DEV` is `true`
+// only in `vite` (dev server), so it's always `false` in any `vite build`
+// — even `vite build --mode development`. We have to check MODE directly
+// to gate by build mode. Vite replaces this comparison with a literal at
+// build time so prod builds still tree-shake the entire debug-wishlists
+// module + every cacheSummary / findMultiSourceItems / testFallback /
+// testMatch import that's now unreachable.
+if (import.meta.env.MODE === 'development') {
   installWishlistDebug();
 }
 
@@ -554,7 +621,7 @@ async function tryRealInventoryMultiSource(): Promise<{
   config.armorRules = loadArmorRules();
   let perkMap = new Map<number, number>();
   try {
-    await getManifest();
+    await ensureManifestReady();
     perkMap = await getEnhancedPerkMap();
   } catch {
     return null; // no manifest = no useful matching, give up to synthetic path
@@ -623,6 +690,8 @@ async function tryRealInventoryMultiSource(): Promise<{
       itemName: `[Test] ${drop.name}`,
       itemIcon: drop.iconUrl,
       weaponType: drop.itemSubType,
+      damageType: drop.damageType,
+      weaponSlot: slotFromBucketHash(drop.bucketHash),
       wishlistMatches: canonicalizedMatches,
       perkIcons,
       perkHashes,
@@ -660,6 +729,10 @@ function appendTestDropToFeed(input: {
   // Brief #14.5: union of every keeper-entry perk hash across enabled
   // wishlists for this weapon. Same canonicalization the controller does.
   weaponGodrollHashes?: number[];
+  // Brief #23 follow-up: subtitle metadata so test drops render the same
+  // "Hand Cannon · Energy · Solar" subtitle that real drops show.
+  damageType?: string | null;
+  weaponSlot?: 'Kinetic' | 'Energy' | 'Heavy' | null;
 }): void {
   const entry: DropFeedEntry = {
     instanceId: `debug-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -674,6 +747,8 @@ function appendTestDropToFeed(input: {
     unlockedPerksBySocketIndex: input.unlockedPerksBySocketIndex,
     weaponGodrollHashes: input.weaponGodrollHashes,
     weaponType: input.weaponType,
+    damageType: input.damageType ?? null,
+    weaponSlot: input.weaponSlot ?? null,
     armorMatched: null,
     armorClass: null,
     armorSet: null,

@@ -1,3 +1,4 @@
+@import '../styles/destiny-tokens.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -9,40 +10,18 @@ body,
 }
 
 body {
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
-    'Open Sans', 'Helvetica Neue', sans-serif;
   margin: 0;
+  background: var(--d-bg-base);
+  color: var(--d-text, #e2e2e2);
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbar treatment tuned to the Rahool-dark palette — stock Chromium
- * scrollbars look jarringly light against #0A0D12. */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-thumb {
-  background: #23282f;
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #2e353d;
-}
-::-webkit-scrollbar-track {
-  background: #0a0d12;
-}
-
-/* Pulse highlight used when navigating from the popup to a specific drop row.
- * Rahool blue at low opacity fades to transparent over 1.5s. Plays on top of
- * the row's static tint; after the animation the base bg takes over again. */
+/* Brief #23: pulse highlight (popup → dashboard nav) restyled from rahool
+ * blue to gold-warm to match the new palette. */
 @keyframes pulse-highlight {
-  0% {
-    background-color: rgba(127, 179, 213, 0.25);
-  }
-  100% {
-    background-color: rgba(127, 179, 213, 0);
-  }
+  0%   { background-color: rgba(206, 174, 51, 0.20); }
+  100% { background-color: rgba(206, 174, 51, 0); }
 }
-.pulse-highlight {
-  animation: pulse-highlight 1.5s ease-out;
-}
+.pulse-highlight { animation: pulse-highlight 1.5s ease-out; }

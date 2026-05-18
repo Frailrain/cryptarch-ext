@@ -1,0 +1,139 @@
+/* Brief #23 — Destiny-native foundations.
+ *
+ * Outfit font (@fontsource/outfit) is imported from popup/main.tsx and
+ * settings/main.tsx — Vite's PostCSS pipeline doesn't resolve bare-module
+ * @import in CSS without postcss-import, but JS imports work natively
+ * and bundle the woff2 files as Vite assets (MV3 CSP-safe).
+ */
+
+/* CSS variables for things Tailwind can't express cleanly: keyframe-bound
+ * colors, sacred-geometry tile, etc. Color values mirror tailwind.config.js
+ * d-* tokens so either system can be used by component code. */
+:root {
+  --d-bg-deep:        #0c0e11;
+  --d-bg-base:        #151719;
+  --d-bg-panel:       #1c1e22;
+  --d-bg-elevated:    #25282d;
+  --d-hairline:       rgba(255, 255, 255, 0.07);
+  --d-gold:           #ceae33;
+  --d-gold-pale:      #e8d57a;
+  --d-gold-bright:    #f5d96e;
+  --d-gold-line:      rgba(206, 174, 51, 0.45);
+  --d-gold-dim:       rgba(206, 174, 51, 0.10);
+  --d-exotic:         #d4af37;
+  --d-exotic-line:    rgba(212, 175, 55, 0.45);
+  --d-legendary:      #9d71c7;
+  --d-legendary-line: rgba(157, 113, 199, 0.45);
+  --d-keep:           #5a9e6f;
+  --d-shard:          #c23a3a;
+}
+
+/* Sacred-geometry drift keyframe lives only in tailwind.config.js now
+ * (transform-based, GPU-composited). The legacy background-position
+ * version that used to sit here caused stepped pixel-snap stutter and
+ * was removed — keeping both would have created a name collision where
+ * the older `sacred-drift` could win the cascade. */
+
+/* Scrollbar — narrow, dark, no rounding. Mirrors handoff §319. */
+.d-scroll::-webkit-scrollbar           { width: 8px; height: 8px; }
+.d-scroll::-webkit-scrollbar-thumb     { background: var(--d-hairline); }
+.d-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.15); }
+.d-scroll::-webkit-scrollbar-track     { background: transparent; }
+
+/* Custom-property surface for inline use cases that need a keyframe-driven
+ * value (e.g., GradeBadge box-shadow on hover). Keep this list short — most
+ * styling should resolve through tailwind utilities. */
+.d-text-shadow-gold { text-shadow: 0 0 8px rgba(206, 174, 51, 0.45); }
+.d-text-shadow-tab  { text-shadow: 0 0 10px rgba(206, 174, 51, 0.50); }
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Loot-drop animation keyframes (handoff §103-120).
+ *
+ * Per-drop sequence:
+ *   1. engram (0-400ms): pulsing rarity-colored diamond at left edge
+ *   2. decrypt (400-700ms): diamond spins + scales out + 8 particles burst
+ *   3. banner (700-1800ms): item card slides in from -120%, flash overlay,
+ *      light sweep, brightness spike at 22% landing point
+ * ──────────────────────────────────────────────────────────────────────── */
+@keyframes drop-slide-in {
+  0%   { transform: translateX(-120%); opacity: 0; }
+  15%  { transform: translateX(0); opacity: 1; }
+  20%  { transform: translateX(0); opacity: 1; }
+  22%  { filter: brightness(1.6); }
+  30%  { filter: brightness(1); }
+  100% { transform: translateX(0); opacity: 1; filter: brightness(1); }
+}
+@keyframes drop-flash {
+  0%   { opacity: 0; }
+  15%  { opacity: 0; }
+  20%  { opacity: 0.7; }
+  35%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+@keyframes drop-sweep {
+  0%   { left: -50%; }
+  15%  { left: -50%; }
+  20%  { left: -20%; }
+  50%  { left: 120%; }
+  100% { left: 120%; }
+}
+@keyframes engram-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50%      { transform: scale(1.15); opacity: 1; }
+}
+@keyframes engram-decrypt {
+  0%   { transform: scale(1) rotate(0deg); opacity: 1; filter: brightness(1); }
+  40%  { transform: scale(1.2) rotate(180deg); opacity: 1; filter: brightness(2); }
+  60%  { transform: scale(0.3) rotate(360deg); opacity: 0.5; filter: brightness(3); }
+  100% { transform: scale(0) rotate(540deg); opacity: 0; filter: brightness(1); }
+}
+@keyframes particles-burst {
+  0%   { transform: scale(0); opacity: 1; }
+  50%  { transform: scale(1.5); opacity: 0.6; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Custom cursor: gradient donut-ring (user-supplied reference).
+ *
+ * Each cursor is an SVG circle filled with a radial gradient that fades
+ * transparent at the center (the hole) and at the outer edge (vignette),
+ * with a bright highlight band in the middle of the ring — reads as a
+ * glassy 3D torus rather than a flat circle.
+ *
+ * Default 28×28 in cool grayscale; pointer 30×30 in gold. Pointer activates
+ * for any clickable target — semantic (button/a/role-button), form controls,
+ * and anything tagged with Tailwind's `.cursor-pointer` (the dashboard
+ * drop-log rows opt in that way). Text inputs keep the native I-beam.
+ * ──────────────────────────────────────────────────────────────────────── */
+.d-cursor-root,
+.d-cursor-root * {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><defs><radialGradient id="r" cx="50%" cy="50%" r="50%"><stop offset="38%" stop-color="rgba(0,0,0,0)"/><stop offset="42%" stop-color="rgba(12,12,12,1)"/><stop offset="52%" stop-color="rgba(70,70,70,1)"/><stop offset="65%" stop-color="rgba(225,225,225,1)"/><stop offset="80%" stop-color="rgba(110,110,110,0.85)"/><stop offset="92%" stop-color="rgba(60,60,60,0.30)"/><stop offset="100%" stop-color="rgba(0,0,0,0)"/></radialGradient></defs><circle cx="14" cy="14" r="14" fill="url(%23r)"/></svg>') 14 14, auto !important;
+}
+/* Gold cursor applies to clickable elements AND their descendants. Without
+ * the `* > selector` half, hovering a span inside a button matched the
+ * broad white-cursor rule on `*` and the gold cursor flickered back to
+ * white as you moved across the row interior. */
+.d-cursor-root button:not(:disabled),
+.d-cursor-root button:not(:disabled) *,
+.d-cursor-root a,
+.d-cursor-root a *,
+.d-cursor-root [role="button"]:not([aria-disabled="true"]),
+.d-cursor-root [role="button"]:not([aria-disabled="true"]) *,
+.d-cursor-root summary,
+.d-cursor-root summary *,
+.d-cursor-root label[for],
+.d-cursor-root label[for] *,
+.d-cursor-root input[type="checkbox"],
+.d-cursor-root input[type="radio"],
+.d-cursor-root select,
+.d-cursor-root .cursor-pointer,
+.d-cursor-root .cursor-pointer * {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30"><defs><radialGradient id="g" cx="50%" cy="50%" r="50%"><stop offset="36%" stop-color="rgba(0,0,0,0)"/><stop offset="40%" stop-color="rgba(40,28,8,1)"/><stop offset="50%" stop-color="rgba(140,100,30,1)"/><stop offset="64%" stop-color="rgba(245,217,110,1)"/><stop offset="78%" stop-color="rgba(180,140,50,0.85)"/><stop offset="93%" stop-color="rgba(245,217,110,0.40)"/><stop offset="100%" stop-color="rgba(0,0,0,0)"/></radialGradient></defs><circle cx="15" cy="15" r="15" fill="url(%23g)"/></svg>') 15 15, auto !important;
+}
+.d-cursor-root input[type="text"],
+.d-cursor-root input[type="url"],
+.d-cursor-root input[type="search"],
+.d-cursor-root textarea {
+  cursor: text !important;
+}

@@ -1,40 +1,42 @@
 import type { TierLetter } from '@/shared/types';
 
-// Brief #12 Part F: per-weapon tier chip. Color palette mirrors the brief —
-// gold for S, bright blue for A, decreasing emphasis through B/C/D, red-tinted
-// for F. Distinct from the grade chip palette (which uses grade-s purple etc.)
-// because tier and grade are different signals: grade is per-roll quality,
-// tier is per-weapon-family ranking.
+// Brief #12 Part F: per-weapon tier chip. Brief #23 update: tokens migrated
+// from legacy rahool-blue palette to Destiny-native d-* palette. S = gold
+// (god-roll), A = legendary purple, B/C/D step down through muted greys,
+// F = shard-red. Distinct per tier so a glance disambiguates rank.
 //
 // Used in two contexts:
-//   - Inline on Drop Log / Popup rows next to source-match chips (`size: sm`)
+//   - Inline on Drop Log / Popup rows next to source-match chips (`compact`)
 //   - In the Drop Log filter row as a toggle button (`active` prop drives the
 //     dimmed-when-off state)
 
+// Brief #23 follow-up: S no longer uses gold — gold is reserved for exotics
+// (and the GOD ROLL badge). S now reads as "best legendary" via a brighter
+// purple, with A stepping down to the standard legendary fill.
 const TIER_COLORS: Record<TierLetter, { active: string; inactive: string }> = {
   S: {
-    active: 'bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50',
-    inactive: 'bg-bg-primary text-text-muted border-bg-border',
+    active: 'bg-d-legendary-dim text-d-legendary-bright border-d-legendary-line',
+    inactive: 'bg-transparent text-d-text-muted border-d-hairline',
   },
   A: {
-    active: 'bg-rahool-blue/20 text-rahool-blue border-rahool-blue/50',
-    inactive: 'bg-bg-primary text-text-muted border-bg-border',
+    active: 'bg-d-legendary-dim text-d-legendary border-d-legendary-line',
+    inactive: 'bg-transparent text-d-text-muted border-d-hairline',
   },
   B: {
-    active: 'bg-rahool-blue/10 text-rahool-blue/70 border-rahool-blue/30',
-    inactive: 'bg-bg-primary text-text-muted border-bg-border',
+    active: 'bg-d-legendary-dim/60 text-d-legendary/80 border-d-legendary-line/60',
+    inactive: 'bg-transparent text-d-text-muted border-d-hairline',
   },
   C: {
-    active: 'bg-text-muted/15 text-text-muted border-text-muted/30',
-    inactive: 'bg-bg-primary text-text-muted/60 border-bg-border',
+    active: 'bg-white/5 text-d-text-sec border-white/15',
+    inactive: 'bg-transparent text-d-text-muted border-d-hairline',
   },
   D: {
-    active: 'bg-text-muted/10 text-text-muted/60 border-text-muted/20',
-    inactive: 'bg-bg-primary text-text-muted/50 border-bg-border',
+    active: 'bg-white/5 text-d-text-muted border-white/10',
+    inactive: 'bg-transparent text-d-text-dim border-d-hairline',
   },
   F: {
-    active: 'bg-red-500/15 text-red-400/80 border-red-500/30',
-    inactive: 'bg-bg-primary text-text-muted/50 border-bg-border',
+    active: 'bg-d-shard-dim text-d-shard border-d-shard-line',
+    inactive: 'bg-transparent text-d-text-muted border-d-hairline',
   },
 };
 
@@ -60,11 +62,16 @@ export function TierChip({
   // filter is set to Armor.
   disabled?: boolean;
 }) {
+  // Defense-in-depth: if a caller hands us a value that bypassed TS (a
+  // raw cache read, a hand-typed cast), bail rather than throw on the
+  // map lookup. Earlier bug had `'?' as TierLetter` reach this path and
+  // crash the whole dashboard render with "reading 'active' of undefined."
   const colors = TIER_COLORS[tier];
+  if (!colors) return null;
   const cls = active ? colors.active : colors.inactive;
   if (onClick) {
     const baseCls =
-      'text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border whitespace-nowrap';
+      'text-d-11 uppercase tracking-d-wide px-2.5 py-1 border whitespace-nowrap font-medium transition-colors duration-d-fast';
     return (
       <button
         type="button"
@@ -81,14 +88,14 @@ export function TierChip({
     return (
       <span
         title={title ?? `Tier ${tier}`}
-        className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-semibold border ${cls}`}
+        className={`inline-flex items-center justify-center w-6 h-6 text-d-12 font-medium border ${cls}`}
       >
         {tier}
       </span>
     );
   }
   const baseCls =
-    'text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border whitespace-nowrap';
+    'text-d-11 uppercase tracking-d-wide px-2.5 py-1 border whitespace-nowrap font-medium';
   return (
     <span title={title} className={`${baseCls} ${cls}`}>
       Tier {tier}

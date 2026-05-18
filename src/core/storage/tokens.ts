@@ -19,10 +19,23 @@ export interface DestinyMembership {
   crossSaveOverride: number;
 }
 
+// Most-recently-played character snapshot, refreshed each poll. Used by the
+// popup's Guardian strip and the dashboard's top-bar emblem chip. classType
+// is the Bungie enum (0 = Titan, 1 = Hunter, 2 = Warlock); we keep it raw
+// so the UI can render the human label and pick class accents.
+export interface ActiveCharacter {
+  characterId: string;
+  classType: number;
+  emblemPath: string;
+  emblemBackgroundPath: string | null;
+  dateLastPlayed: string;
+}
+
 const TOKENS_KEY = 'auth.tokens';
 const MEMBERSHIP_KEY = 'auth.primaryMembership';
 const BUNGIE_USER_KEY = 'auth.bungieUser';
 const AUTH_STATE_KEY = 'auth.state';
+const ACTIVE_CHARACTER_KEY = 'auth.activeCharacter';
 
 // 'expired' is distinct from 'signed-out': the user explicitly signed in but
 // the session lapsed (typically a ~1hr access-token expiry on a public client
@@ -78,4 +91,16 @@ export function loadAuthState(): AuthState {
 
 export function saveAuthState(state: AuthState): void {
   setItem(AUTH_STATE_KEY, state);
+}
+
+export function loadActiveCharacter(): ActiveCharacter | null {
+  return getItem<ActiveCharacter>(ACTIVE_CHARACTER_KEY);
+}
+
+export function saveActiveCharacter(c: ActiveCharacter): void {
+  setItem(ACTIVE_CHARACTER_KEY, c);
+}
+
+export function clearActiveCharacter(): void {
+  removeItem(ACTIVE_CHARACTER_KEY);
 }

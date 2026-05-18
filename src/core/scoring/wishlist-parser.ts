@@ -24,6 +24,25 @@ const PARSE_YIELD_EVERY = 10_000;
 const yieldToEventLoop = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 0));
 
+// V8 returns String.prototype.slice / .trim() and RegExp capture groups as
+// SLICED views into the parent string rather than fresh copies. Storing any
+// such view in a long-lived object (a WishListEntry that lives in the cache
+// Map for hours) keeps the parent string — the entire 30 MB wishlist file —
+// pinned in heap. Switching Charles MinTier or PPC fetches a new file, parses
+// new entries, replaces the cache Map entry — but the OLD entries' slice
+// views still anchor the OLD source text. Per the heap snapshot, 13 Charles
+// variants × ~30 MB pinned source ≈ 390 MB just in source-text retention,
+// plus the parsed entry graph and storage clones on top.
+//
+// The first attempt used s.repeat(1), but V8 short-circuits repeat(count=1)
+// back to the source string — no-op. Same for String(s), '' + s, and slice()
+// with no args: all subject to V8 view optimizations. The reliable escape
+// hatch is s.split('').join('') — V8 has to materialize a fresh char array
+// and reconstruct the string from it, which produces a flat SeqString.
+function copyString(s: string): string {
+  return s.length === 0 ? '' : s.split('').join('');
+}
+
 /**
  * DIM wishlist parser. Handles two coexisting note formats found across
  * community sources:
@@ -131,7 +150,7 @@ export async function parseWishlist(
       itemHash,
       requiredPerks,
       isTrash,
-      notes,
+      notes: copyString(notes),
     };
     if (currentTier) entry.weaponTier = currentTier;
     entries.push(entry);

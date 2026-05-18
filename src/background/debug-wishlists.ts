@@ -23,7 +23,7 @@ import { ItemType, type NewItemDrop, type TierLetter, type WishlistMatch } from 
 import { scoreItem } from '@/core/scoring/engine';
 import { loadScoringConfig, loadWishlistSources } from '@/core/storage/scoring-config';
 import { getAllCachedLists, ensureWishlistCacheReady } from '@/core/wishlists/cache';
-import { getEnhancedPerkMap, getManifest } from '@/core/bungie/manifest';
+import { ensureManifestReady, getEnhancedPerkMap } from '@/core/bungie/manifest';
 
 // Local copy of tier ranking used to compute the best (lowest-index) tier
 // across multiple matching entries when scanning candidates in
@@ -57,7 +57,7 @@ async function ensureReady(): Promise<Map<number, number>> {
   await ensureWishlistCacheReady();
   let perkMap = new Map<number, number>();
   try {
-    await getManifest();
+    await ensureManifestReady();
     perkMap = await getEnhancedPerkMap();
   } catch {
     // Continue with empty map — wishlist matches against base perks still work,

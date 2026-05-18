@@ -15,9 +15,16 @@ import {
   loadWishlists,
   loadWishlistSources,
   saveWishlistMetadata,
-  saveWishlists,
 } from '@/core/storage/scoring-config';
-import { ensureLoaded, onKeyChanged } from '@/adapters/storage';
+import { ensureLoaded, removeItem } from '@/adapters/storage';
+import {
+  STORES,
+  idbBulkPut,
+  idbDelete,
+  idbForEach,
+  idbPut,
+} from '@/core/storage/indexeddb';
+import { logJson, error as logError } from '@/adapters/logger';
 import { refreshWishlists } from './fetch';
 
 if (typeof window !== 'undefined') {
@@ -30,12 +37,15 @@ if (typeof window !== 'undefined') {
 
 // In-memory cache of parsed wishlists, keyed by source id (matches WishlistSource.id
 // and ImportedWishList.id). Service workers die after ~30s of inactivity, so this
-// Map is empty on every cold start — `hydrateWishlistCache()` rebuilds it from the
-// persisted `wishlists` storage key, and the fetch layer keeps it warm thereafter.
+// Map is empty on every cold start — `hydrateWishlistCache()` rebuilds it from IDB
+// (per-source records), and the fetch layer keeps it warm thereafter.
 //
-// Persistence model: parsed entries live under the existing `wishlists` storage key
-// (an ImportedWishList[] array). The cache module reads and writes that key. Avoiding
-// re-download of large wishlists (~25 MB Voltron) on every wake.
+// Brief #26 persistence model: each parsed wishlist is its own record in the IDB
+// `wishlists` store, keyed by source id. Pre-#26 the whole collection lived under
+// the `cryptarch:wishlists` chrome.storage.local key — a single ~288 MB blob.
+// Chrome's storage backend kept that blob in process memory plus IPC-cloned it on
+// every write. Per-source IDB records eliminate both costs (the production heap
+// dropped from 841 MB to a fraction of that as soon as that key was deleted).
 const cache = new Map<string, ImportedWishList>();
 
 export type FetchState = 'idle' | 'fetching' | 'ok' | 'error';
@@ -60,37 +70,90 @@ let hydrated = false;
 let backgroundRefreshKicked = false;
 
 /**
- * Sync cache hydration. Must be called after `ensureLoaded()` has resolved —
- * uses the storage adapter's sync `getItem` under the hood. Idempotent within a
- * worker wake; the per-wake `hydrated` flag short-circuits subsequent calls.
+ * Async cache hydration from IDB. Idempotent within a worker wake; the
+ * per-wake `hydrated` flag short-circuits subsequent calls. Brief #26 made
+ * this async (was sync, backed by chrome.storage.local) — every caller is
+ * already inside an async function so the await is invisible.
  *
- * Graceful empty-cache: if storage holds nothing for the wishlists key (first
- * install, cleared storage, corrupt blob), the Map stays empty and matcher
- * calls return zero matches. The fetch layer populates it on the first refresh.
+ * Graceful empty-cache: if IDB holds nothing for the wishlists store (first
+ * install, cleared storage), the Map stays empty and matcher calls return
+ * zero matches. The fetch layer populates it on the first refresh.
+ *
+ * One-time legacy migration: if `cryptarch:wishlists` is still in
+ * chrome.storage.local from before Brief #26, copy each source's entries
+ * into IDB and delete the chrome.storage.local key. The 288 MB blob in
+ * production storage is the entire driver behind the 841 MB combined
+ * process memory we saw. After this migration runs once, future SW wakes
+ * skip the legacy path.
  */
-export function hydrateWishlistCache(): void {
+function statusFromList(list: ImportedWishList): FetchStatus {
+  return {
+    state: 'ok',
+    lastSuccessAt: list.importedAt,
+    lastAttemptAt: list.importedAt,
+    entryCount: list.entryCount,
+  };
+}
+
+export async function hydrateWishlistCache(): Promise<void> {
   if (hydrated) return;
   cache.clear();
   status.clear();
-  let stored: ImportedWishList[] = [];
+
+  // Brief #26 migration step. loadWishlists() reads chrome.storage.local
+  // via the storage adapter cache — sync, no IPC round-trip, but the data
+  // is only there if `cryptarch:wishlists` hasn't been migrated yet.
+  let migrated = false;
   try {
-    stored = loadWishlists();
-  } catch {
-    stored = [];
+    const legacy = loadWishlists();
+    if (legacy.length > 0) {
+      const entries: Array<readonly [string, ImportedWishList]> = legacy
+        .filter((l) => l && typeof l.id === 'string')
+        .map((l) => [l.id, l] as const);
+      await idbBulkPut(STORES.wishlists, entries);
+      // Drop the legacy key. The storage adapter's onChanged listener
+      // will null out `cache[key]` in response, releasing the ~288 MB of
+      // parsed entries from the storage adapter's in-memory mirror.
+      removeItem('wishlists');
+      logJson('wishlist', 'migrated wishlists to IDB', {
+        sources: entries.length,
+        totalEntries: legacy.reduce((sum, l) => sum + (l?.entryCount ?? 0), 0),
+      });
+      // Populate cache.Map directly from the legacy data we already have
+      // parsed — no need to round-trip through IDB read.
+      for (const list of legacy) {
+        if (!list || typeof list.id !== 'string') continue;
+        cache.set(list.id, list);
+        status.set(list.id, statusFromList(list));
+      }
+      migrated = true;
+    }
+  } catch (err) {
+    logError(
+      'wishlist',
+      'IDB migration failed; will retry on next SW wake',
+      err instanceof Error ? err.message : err,
+    );
   }
-  for (const list of stored) {
-    if (!list || typeof list.id !== 'string') continue;
-    cache.set(list.id, list);
-    // Derive lastSuccessAt from the list's stored importedAt — a list in storage
-    // was, by construction, successfully fetched at some point. Saves us a
-    // separate status-persistence layer for Brief #11.
-    status.set(list.id, {
-      state: 'ok',
-      lastSuccessAt: list.importedAt,
-      lastAttemptAt: list.importedAt,
-      entryCount: list.entryCount,
-    });
+
+  // Hydrate from IDB when there was nothing legacy to migrate (steady state
+  // after the one-time migration runs).
+  if (!migrated) {
+    try {
+      await idbForEach<ImportedWishList>(STORES.wishlists, (_key, list) => {
+        if (!list || typeof list.id !== 'string') return;
+        cache.set(list.id, list);
+        status.set(list.id, statusFromList(list));
+      });
+    } catch (err) {
+      logError(
+        'wishlist',
+        'IDB hydrate failed',
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
+
   hydrated = true;
 }
 
@@ -107,7 +170,7 @@ export function hydrateWishlistCache(): void {
  */
 export async function hydrateWishlistCacheForWorker(): Promise<void> {
   await ensureLoaded();
-  hydrateWishlistCache();
+  await hydrateWishlistCache();
   syncMetadataFromCache();
 }
 
@@ -172,33 +235,12 @@ function metadataMatches(a: WishlistMetadata[], b: WishlistMetadata[]): boolean 
   return true;
 }
 
-// Brief #12.5 Part D: persist-batching. setFetchSuccess used to call
-// persistCache() per source; a 4-source refresh wrote the full ~60 MB array
-// 4 times (each progressively larger). Wrapping refreshWishlists in
-// beginPersistBatch / endPersistBatch defers writes until the batch closes,
-// turning N writes into 1.
-let persistBatchDepth = 0;
-let persistBatchDirty = false;
-
-export function beginPersistBatch(): void {
-  persistBatchDepth += 1;
-}
-
-export function endPersistBatch(): void {
-  persistBatchDepth = Math.max(0, persistBatchDepth - 1);
-  if (persistBatchDepth === 0 && persistBatchDirty) {
-    persistBatchDirty = false;
-    persistCache();
-  }
-}
-
-function schedulePersist(): void {
-  if (persistBatchDepth > 0) {
-    persistBatchDirty = true;
-    return;
-  }
-  persistCache();
-}
+// Brief #26: the pre-#26 batch machinery (beginPersistBatch / endPersistBatch /
+// schedulePersist / persistCache) wrapped chrome.storage.local writes of the
+// entire wishlist array — necessary when a 4-source refresh would otherwise
+// have written the full ~60 MB blob 4 times. With per-source IDB records,
+// each setFetchSuccess writes only its own entry; batching adds no value and
+// the exports are gone.
 
 export function getCachedList(sourceId: string): ImportedWishList | undefined {
   return cache.get(sourceId);
@@ -229,7 +271,12 @@ export function setFetchSuccess(list: ImportedWishList, fetchedAt: number): void
     lastAttemptAt: fetchedAt,
     entryCount: list.entryCount,
   });
-  schedulePersist();
+  // Brief #26: per-source IDB write. Pre-#26 this scheduled a full-array
+  // rewrite to chrome.storage.local — the source of the 288 MB IPC clones.
+  void idbPut(STORES.wishlists, list, list.id);
+  // Keep wishlistMetadata current so the dashboard's WishlistsPanel sees
+  // the new entry count without waiting for the next SW boot.
+  syncMetadataFromCache();
 }
 
 export function setFetchError(
@@ -250,70 +297,11 @@ export function setFetchError(
 export function removeFromCache(sourceId: string): void {
   cache.delete(sourceId);
   status.delete(sourceId);
-  schedulePersist();
-}
-
-function persistCache(): void {
-  saveWishlists(Array.from(cache.values()));
-}
-
-// Cross-context cache sync: the storage adapter's onChanged listener already
-// keeps the raw key/value cache in sync, but our wishlist Map needs its own
-// hook because it derives from a single key. Without this, a settings-page
-// refresh of a source wouldn't be visible to the SW's matcher until the next
-// worker wake — which broke the in-page Wishlist matcher test panel and meant
-// up to 30s of stale scoring after any user-initiated config change.
-//
-// Brief #12.5 follow-up: gate this listener to SW context only. cache.ts is
-// transitively loaded in the settings page (via WeaponsPanel → fetch.ts →
-// cache.ts) and the popup, but neither context ever uses the in-memory cache
-// Map — only the SW's matcher does. Without this gate, every wishlists-key
-// write (60 MB+ payload from SW background refresh) triggered a pointless
-// 60 MB iteration in the settings page context, freezing the dashboard for
-// 10-20s when the user opened the Weapons tab. SW global lacks `window`.
-//
-// Same-context (SW) writes are handled idempotently: setFetchSuccess updates
-// the Map then calls persistCache which triggers this listener; the
-// importedAt comparison below makes the re-process a no-op since the Map
-// already holds the just-written list with the same timestamp.
-if (typeof window === 'undefined') {
-  onKeyChanged<ImportedWishList[]>('wishlists', (newValue) => {
-    // Don't gate on `hydrated`. If the SW wakes for a handler that didn't go
-    // through ensureWishlistCacheReady, this listener serves as the cold-path
-    // initializer too. `hydrated` gets set below so subsequent calls to
-    // hydrateWishlistCache are no-ops.
-    const incoming = new Map<string, ImportedWishList>();
-    if (newValue) {
-      for (const list of newValue) {
-        if (list && typeof list.id === 'string') incoming.set(list.id, list);
-      }
-    }
-    // Drop entries that disappeared from storage (another context deleted a source).
-    for (const id of Array.from(cache.keys())) {
-      if (!incoming.has(id)) {
-        cache.delete(id);
-        status.delete(id);
-      }
-    }
-    // Add or refresh entries that are new or have a newer importedAt.
-    for (const [id, list] of incoming) {
-      const existing = cache.get(id);
-      if (existing && existing.importedAt === list.importedAt) continue;
-      cache.set(id, list);
-      const prev = status.get(id);
-      // Don't clobber an in-flight 'fetching' state; that context's own
-      // setFetchSuccess will land the final state.
-      if (!prev || prev.state !== 'fetching') {
-        status.set(id, {
-          state: 'ok',
-          lastSuccessAt: list.importedAt,
-          lastAttemptAt: list.importedAt,
-          entryCount: list.entryCount,
-        });
-      }
-    }
-    // Mark hydrated so subsequent hydrateWishlistCache calls short-circuit
-    // instead of re-reading from storage redundantly.
-    hydrated = true;
-  });
+  // Brief #26: drop the per-source IDB record. With the legacy chrome.storage.local
+  // path gone, there's no cross-context onChanged listener to invalidate — the
+  // SW is the sole writer of wishlist content, and the dashboard's metadata
+  // subscription (wishlistMetadata key, still chrome.storage.local) catches
+  // the deletion via syncMetadataFromCache.
+  void idbDelete(STORES.wishlists, sourceId);
+  syncMetadataFromCache();
 }

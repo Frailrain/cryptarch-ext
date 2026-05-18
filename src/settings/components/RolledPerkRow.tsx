@@ -50,14 +50,19 @@ export function RolledPerkRow({
   // pre-#14 era so legacy rows don't regress.
   if (!entry.perkHashes) {
     return (
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1.5">
         {entry.perkIcons.map((icon, i) => (
           <PerkTooltip key={i} text="">
             <img
               src={icon}
               alt=""
-              className="rounded"
-              style={{ width: iconSize, height: iconSize }}
+              style={{
+                width: iconSize,
+                height: iconSize,
+                display: 'block',
+                objectFit: 'contain',
+                opacity: 0.75,
+              }}
             />
           </PerkTooltip>
         ))}
@@ -72,7 +77,7 @@ export function RolledPerkRow({
   });
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1.5">
       {model.map((col, i) => {
         if (!col.collapsedPerk || !col.collapsedIconUrl) return null;
         return (

@@ -18,7 +18,12 @@ import {
   startLoginFlow,
   logout as bungieLogout,
 } from '@/core/bungie/auth';
-import { getManifest, getEnhancedPerkMap } from '@/core/bungie/manifest';
+import {
+  ensureManifestReady,
+  getCurrentManifestVersion,
+  getEnhancedPerkMap,
+  lookupItem,
+} from '@/core/bungie/manifest';
 import { listArmorArchetypes, listArmorSets } from '@/core/scoring/armor-roll';
 import { ARMOR_TERTIARIES } from '@/core/rules/armor-rules';
 import {
@@ -42,6 +47,18 @@ import { getCachedPerkPool } from '@/core/bungie/perk-pool-cache';
 // the matcher uses for confirmsCharles tagging; centralized here as a
 // const so the notification branch doesn't accidentally drift.
 const VOLTRON_FAMILY_IDS = new Set(['voltron', 'choosy-voltron']);
+
+// Bucket hashes for weapon slots. Resolved once at drop capture so the row
+// subtitle can render "Kinetic" / "Energy" / "Heavy" without a manifest hop.
+const WEAPON_BUCKET_KINETIC = 1498876634;
+const WEAPON_BUCKET_ENERGY = 2465295065;
+const WEAPON_BUCKET_HEAVY = 953998645;
+function slotFromBucketHash(hash: number): 'Kinetic' | 'Energy' | 'Heavy' | null {
+  if (hash === WEAPON_BUCKET_KINETIC) return 'Kinetic';
+  if (hash === WEAPON_BUCKET_ENERGY) return 'Energy';
+  if (hash === WEAPON_BUCKET_HEAVY) return 'Heavy';
+  return null;
+}
 
 // Brief #20: shave Voltron's "|tags:..." trailer off note text before
 // truncating. Voltron entries often append a metadata trailer the user
@@ -69,9 +86,11 @@ import {
   markFirstSeen,
 } from './autolock';
 import {
+  clearActiveCharacter,
   loadAuthState,
   loadPrimaryMembership,
   loadTokens,
+  saveActiveCharacter,
   savePrimaryMembership,
   saveAuthState,
   saveBungieUser,
@@ -144,6 +163,7 @@ export async function handleSignOut(): Promise<void> {
   log('auth', 'signing out');
   await bungieLogout();
   setItem(BASELINE_KEY, null);
+  clearActiveCharacter();
   saveAuthState('signed-out');
 }
 
@@ -154,7 +174,7 @@ export async function handleSignOut(): Promise<void> {
 // are swallowed — the UI's retry button covers recovery.
 export async function kickoffManifestLoad(): Promise<void> {
   try {
-    await getManifest();
+    await ensureManifestReady();
   } catch (err) {
     logError('manifest', 'initial load failed', err instanceof Error ? err.message : err);
   }
@@ -163,7 +183,7 @@ export async function kickoffManifestLoad(): Promise<void> {
 export async function handleRetryManifest(): Promise<void> {
   log('manifest', 'retry requested');
   try {
-    await getManifest();
+    await ensureManifestReady();
   } catch (err) {
     logError('manifest', 'retry failed', err instanceof Error ? err.message : err);
   }
@@ -176,10 +196,11 @@ export async function handleRetryManifest(): Promise<void> {
 // always available from the static ARMOR_TERTIARIES constant.
 export async function handleGetArmorTaxonomy(): Promise<ArmorTaxonomyPayload> {
   try {
-    const manifest = await getManifest();
+    await ensureManifestReady();
+    const [sets, archetypes] = await Promise.all([listArmorSets(), listArmorArchetypes()]);
     return {
-      sets: listArmorSets(manifest),
-      archetypes: listArmorArchetypes(manifest),
+      sets,
+      archetypes,
       tertiaries: [...ARMOR_TERTIARIES],
     };
   } catch (err) {
@@ -240,6 +261,7 @@ export async function handlePollAlarm(): Promise<void> {
     const result = await runPollCycle(primary.membershipType, primary.membershipId, baseline);
 
     setItem(BASELINE_KEY, result.updatedBaseline);
+    if (result.activeCharacter) saveActiveCharacter(result.activeCharacter);
 
     logJson('poll', 'complete', {
       isBaselineCycle: result.isBaselineCycle,
@@ -301,8 +323,8 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
   let enhancedPerkMap = new Map<number, number>();
   let manifestVersion: string | undefined;
   try {
-    const manifest = await getManifest();
-    manifestVersion = manifest.version;
+    await ensureManifestReady();
+    manifestVersion = (await getCurrentManifestVersion()) ?? undefined;
     enhancedPerkMap = await getEnhancedPerkMap();
   } catch (err) {
     logError('scoring', 'manifest load failed; scoring with empty perk map', err);
@@ -410,6 +432,8 @@ async function handleNewDrops(drops: NewItemDrop[]): Promise<void> {
       weaponGodrollHashes:
         weaponGodrollHashes.length > 0 ? weaponGodrollHashes : undefined,
       weaponType: drop.itemTypeEnum === 3 ? drop.itemSubType : null,
+      damageType: drop.itemTypeEnum === 3 ? drop.damageType : null,
+      weaponSlot: drop.itemTypeEnum === 3 ? slotFromBucketHash(drop.bucketHash) : null,
       armorMatched: result.armorMatched,
       armorClass: result.armorRoll?.armorClass ?? null,
       armorSet: result.armorRoll?.setName ?? null,
@@ -554,7 +578,10 @@ function maybeNotify(entry: DropFeedEntry, locked: boolean): void {
 async function handleConfirmedDeletions(deletions: DeletedItem[]): Promise<void> {
   logJson('deletion', 'confirmed', { count: deletions.length });
 
-  let manifest: Awaited<ReturnType<typeof getManifest>> | null = null;
+  // Brief #25: switched from `manifest.definitions.DestinyInventoryItemDefinition[hash]`
+  // to per-hash IDB lookups. ensureManifestReady on first need; from then on
+  // each ghost-entry path does its own async lookupItem.
+  let manifestReady = false;
 
   for (const d of deletions) {
     const existing = getFeedEntry(d.instanceId);
@@ -570,15 +597,16 @@ async function handleConfirmedDeletions(deletions: DeletedItem[]): Promise<void>
 
     // Ghost entry path — we never saw this item as a scored drop. Look up
     // the manifest def to render a meaningful row.
-    if (!manifest) {
+    if (!manifestReady) {
       try {
-        manifest = await getManifest();
+        await ensureManifestReady();
+        manifestReady = true;
       } catch (err) {
         logError('deletion', 'manifest load failed; skipping ghost entries', err);
         return;
       }
     }
-    const def = manifest.definitions.DestinyInventoryItemDefinition[d.itemHash];
+    const def = await lookupItem(d.itemHash);
     if (!def) continue;
     const itemTypeEnum = def.itemType;
     // Only weapons (3) and armor (2). Skip everything else.

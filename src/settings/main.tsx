@@ -2,6 +2,10 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { ensureLoadedSubset } from '@/adapters/storage';
 import { Settings } from './Settings';
+// Brief #23: self-host Outfit. See popup/main.tsx for rationale.
+import '@fontsource/outfit/300.css';
+import '@fontsource/outfit/400.css';
+import '@fontsource/outfit/500.css';
 import './settings.css';
 
 // Every key the dashboard's initial render reads. Deliberately excludes the
@@ -14,6 +18,7 @@ const DASHBOARD_STORAGE_KEYS = [
   'drop-feed',
   'auth.tokens',
   'auth.primaryMembership',
+  'auth.activeCharacter',
   'auth.state',
   'manifest.ready',
   'manifest.progress',

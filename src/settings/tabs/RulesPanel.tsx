@@ -1,3 +1,7 @@
+// Brief #23 Phase C — Destiny-native armor rules list. Outer Panel chrome
+// + ticks come from Settings.tsx's Armor tab; this file is just header +
+// row list (no inner card wrapper).
+
 import { useState } from 'react';
 import {
   type ArmorRule,
@@ -8,6 +12,7 @@ import {
 } from '@/core/rules/armor-rules';
 import type { ArmorTaxonomyPayload } from '@/shared/types';
 import { ArmorRuleEditor } from '../components/ArmorRuleEditor';
+import { BracketBtn, Btn, Headline, SectionHead, Toggle } from '@/components/destiny';
 
 type EditorState =
   | { mode: 'list' }
@@ -36,9 +41,6 @@ export function RulesPanel({ taxonomy, autoLockOnArmorMatch, onAutoLockToggle }:
   const [rules, setRules] = useState<ArmorRule[]>(() => loadArmorRules());
   const [editor, setEditor] = useState<EditorState>({ mode: 'list' });
 
-  // saveArmorRules writes through chrome.storage which the SW sees via the
-  // global onChanged listener — no explicit broadcast needed (unlike Overwolf
-  // where the background window didn't share storage with the settings window).
   const persist = (next: ArmorRule[]) => {
     setRules(next);
     saveArmorRules(next);
@@ -73,71 +75,64 @@ export function RulesPanel({ taxonomy, autoLockOnArmorMatch, onAutoLockToggle }:
   }
 
   return (
-    <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-base font-medium text-text-primary">Armor rules</h2>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-text-muted">
-            <input
-              type="checkbox"
-              checked={autoLockOnArmorMatch}
-              onChange={(e) => onAutoLockToggle(e.target.checked)}
-              className="accent-rahool-blue"
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <Headline size="sm">Armor Rules</Headline>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-d-9 uppercase tracking-d-wide text-d-text-sec">
+              Auto-Lock on Match
+            </span>
+            <Toggle
+              on={autoLockOnArmorMatch}
+              onToggle={() => onAutoLockToggle(!autoLockOnArmorMatch)}
+              ariaLabel="Auto-lock on armor match"
             />
-            Auto-lock on match
-          </label>
-          <button
-            onClick={() => setEditor({ mode: 'edit', rule: blankRule() })}
-            className="px-3 py-1.5 text-sm rounded bg-rahool-blue/20 text-rahool-blue border border-rahool-blue/40 hover:bg-rahool-blue/30"
-          >
-            + New rule
-          </button>
+          </div>
+          <BracketBtn small onClick={() => setEditor({ mode: 'edit', rule: blankRule() })}>
+            New Rule
+          </BracketBtn>
         </div>
       </div>
 
       {rules.length === 0 ? (
-        <div className="text-sm text-text-muted py-6 text-center">
+        <div className="text-d-11 text-d-text-muted text-center py-8">
           No armor rules yet. Create one to start catching keeper drops.
         </div>
       ) : (
-        <ul className="divide-y divide-bg-border">
+        <ul className="flex flex-col divide-y divide-d-hairline border-y border-d-hairline">
           {rules.map((rule) => (
-            <li key={rule.id} className="py-2.5 flex items-center gap-3">
-              <label className="flex items-center gap-2 text-xs text-text-muted">
-                <input
-                  type="checkbox"
-                  checked={rule.enabled}
-                  onChange={() => handleToggleEnabled(rule.id)}
-                  className="accent-rahool-blue"
-                />
-                <span className="sr-only">Enabled</span>
-              </label>
+            <li key={rule.id} className="py-3 px-2 flex items-center gap-3 hover:bg-d-bg-hover transition-colors duration-d-fast">
+              <Toggle
+                on={rule.enabled}
+                onToggle={() => handleToggleEnabled(rule.id)}
+                ariaLabel="Rule enabled"
+              />
               <div className="flex-1 min-w-0">
-                <div className={`text-sm truncate ${rule.enabled ? 'text-text-primary' : 'text-text-muted'}`}>
+                <div
+                  className={`text-d-13 truncate ${
+                    rule.enabled ? 'text-d-text' : 'text-d-text-muted'
+                  }`}
+                >
                   {rule.name || summarizeRule(rule)}
                 </div>
                 {rule.name && (
-                  <div className="text-xs text-text-muted truncate font-mono">
+                  <div className="text-d-10 text-d-text-muted truncate font-mono">
                     {summarizeRule(rule)}
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => setEditor({ mode: 'edit', rule })}
-                className="px-2 py-1 text-xs rounded border border-bg-border text-text-muted hover:text-text-primary"
-              >
+              <Btn variant="ghost" small onClick={() => setEditor({ mode: 'edit', rule })}>
                 Edit
-              </button>
-              <button
-                onClick={() => handleDelete(rule.id)}
-                className="px-2 py-1 text-xs rounded border border-red-500/40 text-red-300 hover:bg-red-500/10"
-              >
+              </Btn>
+              <Btn variant="danger" small onClick={() => handleDelete(rule.id)}>
                 Delete
-              </button>
+              </Btn>
             </li>
           ))}
         </ul>
       )}
+      <SectionHead>{rules.length} {rules.length === 1 ? 'rule' : 'rules'}</SectionHead>
     </div>
   );
 }

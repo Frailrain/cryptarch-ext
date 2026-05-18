@@ -1,8 +1,6 @@
 import type { WishlistSource } from '@/shared/types';
 import { parseWishlist } from '@/core/scoring/wishlist-parser';
 import {
-  beginPersistBatch,
-  endPersistBatch,
   getCachedList,
   getFetchStatus,
   setFetchError,
@@ -54,18 +52,14 @@ export async function refreshWishlists(
   sources: WishlistSource[],
   opts: RefreshOptions = {},
 ): Promise<RefreshResult[]> {
-  // Brief #12.5 Part D: batch the per-source persist writes. Without this, a
-  // 4-source refresh would write the full ~60 MB wishlists array 4 times
-  // (each progressively larger). With the batch, setFetchSuccess updates
-  // the in-memory cache N times and persistCache fires once at the end.
-  beginPersistBatch();
-  try {
-    const enabled = sources.filter((s) => s.enabled);
-    const promises = enabled.map((source) => refreshOne(source, opts));
-    return await Promise.all(promises);
-  } finally {
-    endPersistBatch();
-  }
+  // Brief #26 follow-up: pre-#26 we batched persist writes here because
+  // setFetchSuccess wrote the full wishlists array to chrome.storage.local
+  // every time, and a 4-source refresh meant 4 progressively-larger ~60 MB
+  // writes. With per-source IDB records the issue is gone — each
+  // setFetchSuccess writes ~5-30 MB to its own IDB key in parallel.
+  const enabled = sources.filter((s) => s.enabled);
+  const promises = enabled.map((source) => refreshOne(source, opts));
+  return await Promise.all(promises);
 }
 
 /**
@@ -76,7 +70,7 @@ export async function refreshOne(
   source: WishlistSource,
   opts: RefreshOptions = {},
 ): Promise<RefreshResult> {
-  if (!opts.force && !isStale(source.id)) {
+  if (!opts.force && !isStale(source)) {
     const cached = getCachedList(source.id);
     const stat = getFetchStatus(source.id);
     return {
@@ -90,10 +84,21 @@ export async function refreshOne(
   return performFetch(source);
 }
 
-function isStale(sourceId: string): boolean {
-  const stat = getFetchStatus(sourceId);
+function isStale(source: WishlistSource): boolean {
+  const stat = getFetchStatus(source.id);
   if (!stat.lastSuccessAt) return true;
-  return Date.now() - stat.lastSuccessAt > STALENESS_MS;
+  if (Date.now() - stat.lastSuccessAt > STALENESS_MS) return true;
+  // Brief #25.1: URL drift detection. If the cached entry was fetched from
+  // a different URL than the source currently advertises, treat it as stale
+  // so the next refresh swaps in fresh data. This is the auto-migration path
+  // for Charles entries fetched from a pre-#25.1 `MR{tier}_PPC{ppc}` URL —
+  // on first SW wake after the static URL lands, the cached entry's
+  // `sourceUrl` won't match the new `MRF_PPC0` constant and we re-fetch.
+  // Without this, the cached restricted-tier data would persist for up to
+  // 24 h before natural staleness cleared it.
+  const cached = getCachedList(source.id);
+  if (cached && cached.sourceUrl !== source.url) return true;
+  return false;
 }
 
 export type ValidationResult =

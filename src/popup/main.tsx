@@ -2,6 +2,11 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { ensureLoadedSubset } from '@/adapters/storage';
 import { Popup } from './Popup';
+// Brief #23: self-host Outfit. Vite bundles the woff2 files referenced
+// by these CSS files so they ship in the extension and load offline.
+import '@fontsource/outfit/300.css';
+import '@fontsource/outfit/400.css';
+import '@fontsource/outfit/500.css';
 import './popup.css';
 
 // Only the keys the popup actually reads. Skipping the wishlists key
@@ -13,6 +18,7 @@ const POPUP_STORAGE_KEYS = [
   'drop-feed',
   'auth.tokens',
   'auth.primaryMembership',
+  'auth.activeCharacter',
   'auth.state',
   'popupFilterState',
   'scoring-config',

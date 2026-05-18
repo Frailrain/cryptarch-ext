@@ -1,3 +1,7 @@
+// Brief #23 Phase D — Destiny-native custom-source list. Renders inside the
+// Settings tab's Wishlist Coverage Panel; this file has no outer panel
+// chrome of its own (the parent provides it).
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WishlistMetadata, WishlistSource } from '@/shared/types';
 import {
@@ -7,21 +11,13 @@ import {
 } from '@/core/storage/scoring-config';
 import { onKeyChanged } from '@/adapters/storage';
 // Brief #12.5 Part D: settings is a viewer. All wishlist mutations go through
-// SW message handlers via this client wrapper. Direct imports of the
-// fetch/cache/matcher modules from settings are forbidden — see comment block
-// at the top of cache.ts for why.
+// SW message handlers via this client wrapper.
 import {
   requestDropSource,
   requestRefreshOne,
   requestValidateUrl,
 } from '@/adapters/wishlist-messages';
-
-// Brief #21: this panel is now custom-URLs-only. Built-in source toggles
-// (Charles / Voltron / deprecated Aegis) were removed — their state is
-// fixed by the new model in known-sources.ts, and the Weapons tab's
-// voltronConfirmation toggle controls whether Voltron contributes to
-// scoring. Custom GitHub URLs added here default to notification-only:
-// they fire alerts but don't appear in tier chips or gold borders.
+import { Btn, Chip, SectionHead } from '@/components/destiny';
 
 type RowState =
   | { kind: 'idle' }
@@ -36,7 +32,6 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
   const [rowStates, setRowStates] = useState<Map<string, RowState>>(new Map());
   const [nowTick, setNowTick] = useState(() => Date.now());
 
-  // Custom URL form state.
   const [newUrl, setNewUrl] = useState('');
   const [newName, setNewName] = useState('');
   const [validating, setValidating] = useState(false);
@@ -100,8 +95,6 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
     const id = `custom-${crypto.randomUUID()}`;
     const trimmedName = newName.trim();
     const derivedName = trimmedName || deriveNameFromUrl(trimmedUrl);
-    // Brief #21: custom URLs default to notification-only. They fire alerts
-    // when matched but don't decorate the Drop Log row.
     const newSource: WishlistSource = {
       id,
       name: derivedName,
@@ -151,19 +144,17 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
   return (
     <div className="space-y-4">
       {showHeader && (
-        <div className="px-1 space-y-0.5">
-          <h3 className="text-sm font-medium text-text-primary">
-            Custom GitHub repositories
-          </h3>
-          <p className="text-xs text-text-muted">
-            Custom sources fire notifications when rolls match but won&apos;t
-            appear as tier chips or gold-border perks in the Drop Log. Use
-            these for clan-specific or experimental wishlists.
+        <header className="space-y-1">
+          <SectionHead>Custom GitHub Repositories</SectionHead>
+          <p className="text-d-11 text-d-text-muted leading-relaxed">
+            Custom sources fire notifications when rolls match but won&apos;t appear
+            as tier chips or gold-border perks in the Drop Log. Use these for
+            clan-specific or experimental wishlists.
           </p>
-        </div>
+        </header>
       )}
 
-      <div className="rounded-lg border border-bg-border bg-bg-card p-4 space-y-3">
+      <div className="border border-d-hairline p-3 space-y-2">
         <div className="flex flex-col sm:flex-row gap-2">
           <input
             type="url"
@@ -174,7 +165,7 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
             }}
             placeholder="https://raw.githubusercontent.com/..."
             disabled={validating}
-            className="flex-1 px-3 py-2 text-sm rounded bg-bg-primary border border-bg-border text-text-primary placeholder:text-text-muted disabled:opacity-50"
+            className="flex-1 px-3 py-2 text-d-12 bg-d-bg-pressed border border-d-hairline text-d-text placeholder:text-d-text-muted focus:outline-none focus:border-d-gold-line transition-colors duration-d-fast disabled:opacity-50"
           />
           <input
             type="text"
@@ -182,21 +173,21 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Name (optional)"
             disabled={validating}
-            className="sm:w-48 px-3 py-2 text-sm rounded bg-bg-primary border border-bg-border text-text-primary placeholder:text-text-muted disabled:opacity-50"
+            className="sm:w-48 px-3 py-2 text-d-12 bg-d-bg-pressed border border-d-hairline text-d-text placeholder:text-d-text-muted focus:outline-none focus:border-d-gold-line transition-colors duration-d-fast disabled:opacity-50"
           />
-          <button
+          <Btn
+            variant="primary"
             onClick={() => void handleAddCustom()}
             disabled={validating || newUrl.trim() === ''}
-            className="px-4 py-2 text-sm rounded bg-rahool-blue/20 text-rahool-blue border border-rahool-blue/40 hover:bg-rahool-blue/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {validating ? 'Validating…' : 'Add'}
-          </button>
+          </Btn>
         </div>
-        {addError && <div className="text-xs text-red-400">{addError}</div>}
+        {addError && <div className="text-d-10 text-d-shard uppercase tracking-d-wide">{addError}</div>}
       </div>
 
       {customs.length > 0 ? (
-        <div className="rounded-lg border border-bg-border bg-bg-card divide-y divide-bg-border">
+        <ul className="border-y border-d-hairline divide-y divide-d-hairline">
           {customs.map((source) => (
             <CustomSourceRow
               key={source.id}
@@ -208,9 +199,9 @@ export function WishlistsPanel({ showHeader = true }: { showHeader?: boolean } =
               onRename={(name) => handleRenameCustom(source, name)}
             />
           ))}
-        </div>
+        </ul>
       ) : (
-        <div className="rounded-lg border border-bg-border bg-bg-card p-4 text-sm text-text-muted text-center">
+        <div className="text-d-11 text-d-text-muted text-center py-6">
           No custom sources added.
         </div>
       )}
@@ -243,15 +234,15 @@ function CustomSourceRow({
   const lastUpdated = cachedList?.importedAt;
   const entryCount = cachedList?.entryCount;
 
-  const statusLabel = (() => {
-    if (rowState.kind === 'fetching') return { text: 'Fetching…', tone: 'muted' as const };
-    if (rowState.kind === 'error') return { text: 'Error', tone: 'error' as const };
-    if (lastUpdated) return { text: 'Loaded', tone: 'ok' as const };
-    return { text: 'Never fetched', tone: 'muted' as const };
+  const statusKind = (() => {
+    if (rowState.kind === 'fetching') return 'fetching' as const;
+    if (rowState.kind === 'error') return 'error' as const;
+    if (lastUpdated) return 'ok' as const;
+    return 'idle' as const;
   })();
 
   return (
-    <div className="px-4 py-3 flex items-start gap-3">
+    <li className="px-3 py-3 flex items-start gap-3 hover:bg-d-bg-hover transition-colors duration-d-fast">
       <div className="flex-1 min-w-0 space-y-1">
         <div className="flex items-center gap-2 flex-wrap">
           {editingName ? (
@@ -273,22 +264,22 @@ function CustomSourceRow({
                   setEditingName(false);
                 }
               }}
-              className="text-sm font-medium bg-bg-primary border border-bg-border rounded px-2 py-0.5"
+              className="text-d-13 font-medium bg-d-bg-pressed border border-d-hairline px-2 py-0.5 focus:outline-none focus:border-d-gold-line"
             />
           ) : (
             <button
               type="button"
               onClick={() => setEditingName(true)}
-              className="text-sm font-medium hover:text-rahool-blue cursor-text"
+              className="text-d-13 font-medium text-d-text hover:text-d-gold-pale transition-colors duration-d-fast cursor-text"
               title="Click to rename"
             >
               {source.name}
             </button>
           )}
-          <StatusChip tone={statusLabel.tone} text={statusLabel.text} />
+          <StatusBadge kind={statusKind} />
         </div>
 
-        <div className="text-xs text-text-muted flex items-center gap-3 flex-wrap">
+        <div className="text-d-10 text-d-text-muted uppercase tracking-d-wide flex items-center gap-3 flex-wrap">
           {entryCount !== undefined && <span>{entryCount.toLocaleString()} rolls</span>}
           {lastUpdated && (
             <span title={new Date(lastUpdated).toLocaleString()}>
@@ -298,40 +289,35 @@ function CustomSourceRow({
         </div>
 
         {rowState.kind === 'error' && (
-          <div className="text-xs text-red-400 break-words">{rowState.message}</div>
+          <div className="text-d-10 text-d-shard break-words">{rowState.message}</div>
         )}
       </div>
 
-      <div className="flex items-center gap-2 pt-0.5">
-        <button
-          type="button"
-          onClick={onDelete}
-          className="text-xs px-2 py-1 rounded border border-bg-border text-text-muted hover:text-red-400"
-        >
-          Remove
-        </button>
-      </div>
-    </div>
+      <Btn variant="danger" small onClick={onDelete}>
+        Remove
+      </Btn>
+    </li>
   );
 }
 
-function StatusChip({
-  tone,
-  text,
-}: {
-  tone: 'ok' | 'muted' | 'error';
-  text: string;
-}) {
-  const cls =
-    tone === 'ok'
-      ? 'bg-rahool-blue/15 text-rahool-blue border-rahool-blue/40'
-      : tone === 'error'
-        ? 'bg-red-500/15 text-red-400 border-red-500/40'
-        : 'bg-bg-primary text-text-muted border-bg-border';
+function StatusBadge({ kind }: { kind: 'ok' | 'idle' | 'fetching' | 'error' }) {
+  const config = (() => {
+    switch (kind) {
+      case 'ok':
+        return { color: 'keep' as const, label: 'Loaded' };
+      case 'fetching':
+        return { color: 'gold' as const, label: 'Fetching…' };
+      case 'error':
+        return { color: 'shard' as const, label: 'Error' };
+      case 'idle':
+      default:
+        return { color: 'neutral' as const, label: 'Never fetched' };
+    }
+  })();
   return (
-    <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${cls}`}>
-      {text}
-    </span>
+    <Chip active color={config.color}>
+      {config.label}
+    </Chip>
   );
 }
 

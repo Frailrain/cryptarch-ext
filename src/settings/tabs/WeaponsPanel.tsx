@@ -6,9 +6,8 @@ import {
   saveWeaponFilterConfig,
 } from '@/core/storage/scoring-config';
 import { onKeyChanged } from '@/adapters/storage';
-import { requestRefreshOne } from '@/adapters/wishlist-messages';
-import { CHARLES_SOURCE_ID } from '@/core/wishlists/known-sources';
 import type { CharlesSourceConfig, WeaponFilterConfig } from '@/shared/types';
+import { Chip, Headline, SectionHead, Toggle } from '@/components/destiny';
 import { WishlistsPanel } from './WishlistsPanel';
 
 // Brief #19. The Weapons tab is the user's "what to be notified about" surface.
@@ -60,14 +59,20 @@ export function WeaponsPanel() {
     };
   }, []);
 
-  // Persist Charles config and force a refetch of the Charles source. The
-  // SW's URL-from-config injection means refresh hits the new MR{tier}_PPC{n}
-  // file; no cache-key gymnastics needed here. Force=true skips the 24h
-  // staleness window so the swap takes effect immediately.
+  // Brief #25 follow-up: chip clicks are now FILTER-ONLY. They write the
+  // updated minTier/PPC to storage and that's it. Scoring reads the latest
+  // config from storage when matching drops, applying the filter against
+  // the already-parsed wishlist entries in cache.
+  //
+  // Pre-#25 behavior: each chip click triggered a force-refetch of a
+  // config-specific Charles URL (MR{tier}_PPC{ppc}.txt). Rapid clicks
+  // chained 6+ fetches × 30 MB each through the SW, each rewriting the
+  // ~100 MB `cryptarch:wishlists` blob to chrome.storage.local. The IPC
+  // clones for those writes alone could push process memory past 8 GB.
+  // Zero network, zero parse on chip click is the fix.
   const updateCharlesConfig = useCallback((next: CharlesSourceConfig) => {
     setCharlesConfig(next);
     saveCharlesSourceConfig(next);
-    void requestRefreshOne(CHARLES_SOURCE_ID, true);
   }, []);
 
   const updateFilterConfig = useCallback((next: WeaponFilterConfig) => {
@@ -98,38 +103,33 @@ export function WeaponsPanel() {
 
   return (
     <div className="space-y-6">
-      {/* Brief #21: top-of-tab header. Cryptarch's appraiser uses Charles's
-          Aegis tier export as primary; Voltron community keepers serve as
-          confirmation when the toggle below is on. The selector controls
-          which Charles file is active (tier coverage + perk strictness). */}
-      <header className="space-y-1 px-1">
-        <h2 className="text-lg font-semibold text-text-primary">Notification Settings</h2>
-        <p className="text-sm text-text-muted">
+      <header className="space-y-1">
+        <Headline size="md">Notification Settings</Headline>
+        <p className="text-d-11 text-d-text-muted leading-relaxed">
           Configure which drops trigger notifications. Cryptarch alerts you when a
           drop matches your tier and perk criteria below.
         </p>
       </header>
 
-      <div className="rounded-lg border border-bg-border bg-bg-card p-5 space-y-5">
+      <div className="space-y-5">
         <div className="space-y-1">
-          <h2 className="text-base font-semibold">Aegis weapon coverage</h2>
-          <p className="text-sm text-text-muted">
-            Pick the tier threshold and how strict you want perk requirements. The
-            Charles wishlist swaps to the matching variant automatically; switching
-            tiers or perk strictness re-fetches the corresponding file (~15s the
-            first time for each combination).
+          <Headline size="sm">Aegis weapon coverage</Headline>
+          <p className="text-d-11 text-d-text-muted leading-relaxed">
+            Pick the tier threshold and how strict you want perk requirements. Brief
+            #25.1: switching tier or PPC no longer triggers a refetch — Cryptarch
+            caches the full superset and applies these as score-time filters.
           </p>
         </div>
 
-        <PillRadioGroup
+        <ChipRow
           label="Min Tier"
           options={MIN_TIER_OPTIONS}
           value={charlesConfig.minTier}
           onChange={handleMinTierChange}
-          helper="Lower tiers include more weapons. F shows everything Aegis rated."
+          helper="Lower tiers include more weapons. F counts every Aegis-rated roll."
         />
 
-        <PillRadioGroup
+        <ChipRow
           label="Perks Per Column"
           options={PPC_OPTIONS}
           value={charlesConfig.ppc}
@@ -137,25 +137,24 @@ export function WeaponsPanel() {
           helper="How many flagged perks must roll to count as a match. 0 = any roll. 3 = strict god rolls only."
         />
 
-        <Checkbox
-          label="Show thumbs-up when Voltron also flags this roll"
+        <ToggleRow
+          label="Voltron Confirmation"
           checked={filterConfig.voltronConfirmation}
           onChange={handleVoltronToggle}
-          helper="Voltron is a community-curated keeper list. When both Aegis and Voltron agree, the drop gets an extra confirmation indicator. (Visual treatment lands in a follow-up brief.)"
+          helper="Show a thumbs-up when Voltron community keepers also flag the same roll. Confirmation only — Voltron never grades a drop by itself."
         />
       </div>
 
-      {/* Brief #21: WishlistsPanel renders with its own header (Custom
-          GitHub repositories) and explanatory text. Built-in source toggles
-          are gone — Charles is always primary, Voltron + Choosy Voltron are
-          gated by the confirmation toggle above, deprecated Aegis sources
-          stay disabled. */}
+      {/* Brief #21: WishlistsPanel renders with its own header (Custom GitHub
+          repositories) and explanatory text. Built-in source toggles are gone
+          — Charles is always primary; Voltron + Choosy Voltron are gated by
+          the confirmation toggle above. */}
       <WishlistsPanel />
     </div>
   );
 }
 
-function PillRadioGroup<T extends string | number>({
+function ChipRow<T extends string | number>({
   label,
   options,
   value,
@@ -169,32 +168,29 @@ function PillRadioGroup<T extends string | number>({
   helper?: string;
 }) {
   return (
-    <div className="space-y-1.5">
-      <div className="text-xs uppercase tracking-wide text-text-muted">{label}</div>
-      <div className="flex flex-wrap gap-1">
-        {options.map((opt) => {
-          const active = opt.value === value;
-          return (
-            <button
-              key={String(opt.value)}
-              onClick={() => onChange(opt.value)}
-              className={`text-xs px-3 py-1.5 rounded border min-w-[2.5rem] ${
-                active
-                  ? 'bg-rahool-blue/20 text-rahool-blue border-rahool-blue/40'
-                  : 'border-bg-border text-text-muted hover:text-text-primary'
-              }`}
-            >
-              {opt.label}
-            </button>
-          );
-        })}
+    <div className="space-y-2">
+      <SectionHead>{label}</SectionHead>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => (
+          <Chip
+            key={String(opt.value)}
+            active={opt.value === value}
+            color="gold"
+            onClick={() => onChange(opt.value)}
+            className="min-w-[2rem] py-1 justify-center"
+          >
+            {opt.label}
+          </Chip>
+        ))}
       </div>
-      {helper && <div className="text-xs text-text-muted">{helper}</div>}
+      {helper && (
+        <div className="text-d-10 text-d-text-muted leading-relaxed">{helper}</div>
+      )}
     </div>
   );
 }
 
-function Checkbox({
+function ToggleRow({
   label,
   checked,
   onChange,
@@ -206,17 +202,14 @@ function Checkbox({
   helper?: string;
 }) {
   return (
-    <div className="space-y-1.5">
-      <label className="flex items-start gap-2 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-          className="mt-0.5 w-4 h-4 accent-rahool-blue cursor-pointer"
-        />
-        <span className="text-sm text-text-primary">{label}</span>
-      </label>
-      {helper && <div className="text-xs text-text-muted ml-6">{helper}</div>}
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <SectionHead>{label}</SectionHead>
+        <Toggle on={checked} onToggle={() => onChange(!checked)} ariaLabel={label} />
+      </div>
+      {helper && (
+        <div className="text-d-10 text-d-text-muted leading-relaxed">{helper}</div>
+      )}
     </div>
   );
 }

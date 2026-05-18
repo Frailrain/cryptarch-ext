@@ -27,9 +27,8 @@ import {
 } from '@/core/storage/indexeddb';
 import { error as logError } from '@/adapters/logger';
 import {
-  getCachedManifest,
+  getCurrentManifestVersion,
   getEnhancedPerkMap,
-  getManifest,
   lookupItem,
   lookupPlugSet,
 } from './manifest';
@@ -420,15 +419,13 @@ function isNonPerkCategory(identifier: string): boolean {
 }
 
 async function currentManifestVersion(): Promise<string | null> {
-  // Prefer the synchronously-available cached manifest so common-case lookups
-  // don't await. If the manifest hasn't been loaded yet (rare — the SW boot
-  // kickoff usually wins this race) fall back to the async fetch. Returns
-  // null when the manifest fails to load entirely.
-  const cached = getCachedManifest();
-  if (cached) return cached.version;
+  // Brief #25: getCurrentManifestVersion reads a single IDB meta record and
+  // caches the version string in module-level state. No more "is the full
+  // graph available synchronously" race — the cached version is set the
+  // first time manifest meta is read, and stays valid until a manifest
+  // version bump invalidates it.
   try {
-    const m = await getManifest();
-    return m.version;
+    return await getCurrentManifestVersion();
   } catch {
     return null;
   }

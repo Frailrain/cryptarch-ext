@@ -74,6 +74,17 @@ export interface PollCycleResult {
   updatedBaseline: BaselineMap;
   itemsKnown: number;
   isBaselineCycle: boolean;
+  // Most-recently-played character snapshot from this profile fetch. Used by
+  // the controller to update auth.activeCharacter so the popup + dashboard
+  // can render the user's actual emblem and class. null when the profile
+  // returned no characters (rare — should only happen for brand-new accounts).
+  activeCharacter: {
+    characterId: string;
+    classType: number;
+    emblemPath: string;
+    emblemBackgroundPath: string | null;
+    dateLastPlayed: string;
+  } | null;
 }
 
 // Three 30s cycles = 90s of silence before we call an item dismantled.
@@ -103,6 +114,7 @@ export async function runPollCycle(
 ): Promise<PollCycleResult> {
   const profile = await getProfile(membershipType, membershipId, PROFILE_COMPONENTS);
   const currentMap = buildItemLocationMap(profile);
+  const activeCharacter = pickActiveCharacter(profile);
 
   // Seed updatedBaseline with everything currently present (missingCycles
   // reset to undefined/0 for items that returned from a flap).
@@ -118,6 +130,7 @@ export async function runPollCycle(
       updatedBaseline,
       itemsKnown: currentMap.size,
       isBaselineCycle: true,
+      activeCharacter,
     };
   }
 
@@ -172,6 +185,33 @@ export async function runPollCycle(
     updatedBaseline,
     itemsKnown: currentMap.size,
     isBaselineCycle: false,
+    activeCharacter,
+  };
+}
+
+// Pick the character with the latest dateLastPlayed. Bungie returns dates as
+// ISO strings; Date.parse handles them. Returns null if no characters or all
+// parse failures (defensive — Bungie has not been seen to return empty here
+// but a brand-new account technically could).
+function pickActiveCharacter(
+  profile: DestinyProfileResponse,
+): PollCycleResult['activeCharacter'] {
+  const chars = profile.characters?.data;
+  if (!chars) return null;
+  let best: { c: typeof chars[string]; ts: number } | null = null;
+  for (const c of Object.values(chars)) {
+    const ts = Date.parse(c.dateLastPlayed);
+    if (Number.isNaN(ts)) continue;
+    if (!best || ts > best.ts) best = { c, ts };
+  }
+  if (!best) return null;
+  const c = best.c;
+  return {
+    characterId: c.characterId,
+    classType: c.classType,
+    emblemPath: c.emblemPath,
+    emblemBackgroundPath: c.emblemBackgroundPath ?? null,
+    dateLastPlayed: c.dateLastPlayed,
   };
 }
 

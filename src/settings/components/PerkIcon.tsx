@@ -1,20 +1,17 @@
 // Brief #14.4 — single render component for perk icons. Consumes
 // PerkVisualState from the display model; computes no classification of
-// its own. Two independent visual channels:
+// its own.
 //
-//   isRolledOnGun     → blue tinted background  (rolledBackgroundClasses)
-//   isWishlistTagged  → gold border + glow      (wishlistBorderClasses)
-//
-// They apply via independent class clauses with no nested ternaries; a perk
-// that is both rolled and tagged stacks both treatments. Untagged-and-not-
-// rolled perks are dimmed (the "missed filler" case in expanded view).
-//
-// Background tint goes on the wrapper, not the inner image — the image is
-// sized smaller than the wrapper so the tint shows through around the
-// edges. Don't change that without verifying the tint stays visible.
+// Visual treatment (user preference, supersedes the redesign brief's "ring"
+// styling): icons render as-is — no border, no clip-path, no background
+// container. Wishlist-tagged perks get a soft gold halo behind/around them
+// via layered box-shadows (so the highlight reads as a backlight rather
+// than a frame). Untagged-but-rolled perks render at full opacity; perks
+// that are neither rolled nor tagged fade to 30% (only visible in the
+// expanded perk-pool view).
 //
 // data-* attributes mirror the booleans so visual state is inspectable
-// from the DOM (handy for tests and for visual debugging in DevTools).
+// from the DOM (handy for tests and visual debugging in DevTools).
 
 import type { PerkVisualState } from '@/core/wishlists/perk-visual-state';
 import { PerkTooltip } from './PerkTooltip';
@@ -30,39 +27,30 @@ export function PerkIcon({ state, iconUrl, size, tooltipText }: PerkIconProps) {
   const { isRolledOnGun, isWishlistTagged } = state;
   const isDimmed = !isRolledOnGun && !isWishlistTagged;
 
-  const wrapperStyle: React.CSSProperties = {
+  const imgStyle: React.CSSProperties = {
     width: size,
     height: size,
+    display: 'block',
+    objectFit: 'contain',
+    opacity: isDimmed ? 0.3 : 1,
   };
-  if (isRolledOnGun) {
-    wrapperStyle.background = 'rgba(127, 179, 213, 0.25)';
-  }
   if (isWishlistTagged) {
-    wrapperStyle.border = '2px solid #D4A82C';
-    wrapperStyle.boxShadow = '0 0 4px rgba(212, 168, 44, 0.4)';
+    // drop-shadow follows the icon's alpha channel rather than its bounding
+    // box, so the glow tracks the actual perk silhouette instead of stamping
+    // a square halo around the PNG. Two stacked layers: a tight bright bloom
+    // hugging the shape + a wider soft halo for the diffused backlight.
+    imgStyle.filter =
+      'drop-shadow(0 0 3px rgba(206,174,51,0.85)) drop-shadow(0 0 9px rgba(206,174,51,0.55)) drop-shadow(0 0 14px rgba(206,174,51,0.35))';
   }
-  if (isDimmed) {
-    wrapperStyle.opacity = 0.4;
-  }
-
-  // The inner image is sized smaller than the wrapper so the wrapper's
-  // background tint is visible around its edges. Without this margin the
-  // image fully covers the wrapper and the blue tint disappears.
-  const innerSize = isWishlistTagged ? size - 4 : size - 2;
 
   const icon = (
     <span
-      className="inline-flex items-center justify-center rounded flex-shrink-0"
+      className="inline-flex flex-shrink-0"
       data-rolled={isRolledOnGun}
       data-wishlist-tagged={isWishlistTagged}
-      style={wrapperStyle}
+      style={{ width: size, height: size }}
     >
-      <img
-        src={iconUrl}
-        alt=""
-        className="rounded"
-        style={{ width: innerSize, height: innerSize }}
-      />
+      <img src={iconUrl} alt="" style={imgStyle} />
     </span>
   );
 

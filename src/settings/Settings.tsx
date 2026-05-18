@@ -1,9 +1,28 @@
+// Brief #23 — Destiny-native dashboard rewrite.
+//
+// Shell: new top bar, new tab nav (Drops / Armor / Settings), sacred-geometry
+// background drift, new banners.
+//
+// Tab bodies: Drops gets a full rewrite using new atoms wrapping DropLogPanel.
+// Armor + Settings keep their existing panel internals (RulesPanel,
+// WeaponsPanel) wrapped in the new Panel chrome. Settings adds a new Bungie
+// Account sub-panel. Sub-panel internals (DropLogPanel, RulesPanel,
+// WeaponsPanel) are still legacy-Tailwind for now — they get rewritten in
+// the next pass; v0.7 ships the chrome reskin first.
+
 import { useCallback, useEffect, useState } from 'react';
 import { loadFeed } from '@/core/storage/drop-feed';
 import { isLoggedIn } from '@/core/bungie/auth';
-import { loadAuthState, loadPrimaryMembership, type AuthState } from '@/core/storage/tokens';
+import {
+  loadActiveCharacter,
+  loadAuthState,
+  loadPrimaryMembership,
+  type ActiveCharacter,
+  type AuthState,
+} from '@/core/storage/tokens';
 import { getItem, onKeyChanged, removeItem, setItem } from '@/adapters/storage';
 import { send } from '@/shared/messaging';
+import pkg from '../../package.json';
 import type { DropFeedEntry } from '@/shared/types';
 import { DropLogPanel, type DropTypeFilter, type DropMatchFilter } from './tabs/DropLogPanel';
 import { RulesPanel } from './tabs/RulesPanel';
@@ -20,33 +39,41 @@ import type {
   TierLetter,
 } from '@/shared/types';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
+import {
+  BracketBtn,
+  Btn,
+  Divider,
+  Headline,
+  Panel,
+  SacredBg,
+} from '@/components/destiny';
 
-// Brief #12: tab labels reorganized to put weapon configuration on equal
-// footing with armor. "Rules" → "Armor", "Wishlists" folded into "Weapons".
-// Component filenames (RulesPanel, WishlistsPanel) deliberately kept — the
-// internal naming reflects what the components manage (armor rules / wishlist
-// sources), the tab labels reflect the user-facing mental model (Armor /
-// Weapons). Renaming the files would have churned ~100 lines of imports for
-// no functional benefit.
-type Tab = 'drops' | 'armor' | 'weapons';
+// Tab labels per Brief #23 redesign: 'weapons' renamed to 'settings'. Internal
+// tab-body components keep their existing filenames (WeaponsPanel still
+// manages the wishlist-coverage UI even though the tab is labeled Settings).
+type Tab = 'drops' | 'armor' | 'settings';
 
-// Migrate pre-#12 pendingNavigation values written by an older popup before
-// the tab rename. Returns null if the stored value is missing or unrecognized.
+// Forward-migrate pre-#23 pendingNavigation values: 'rules' → 'armor',
+// 'wishlists' / 'weapons' → 'settings'. Anything else falls back to null.
 function loadAndMigratePendingNavigation(): PendingNavigation | null {
   const raw = getItem<{ tab: string; instanceId?: string }>('pendingNavigation');
   if (!raw) return null;
-  const migrated =
-    raw.tab === 'rules' ? 'armor' : raw.tab === 'wishlists' ? 'weapons' : raw.tab;
-  if (migrated !== 'drops' && migrated !== 'armor' && migrated !== 'weapons') {
+  let migrated: string = raw.tab;
+  if (migrated === 'rules') migrated = 'armor';
+  if (migrated === 'wishlists' || migrated === 'weapons') migrated = 'settings';
+  if (migrated !== 'drops' && migrated !== 'armor' && migrated !== 'settings') {
     return null;
   }
-  return { tab: migrated, instanceId: raw.instanceId };
+  return { tab: migrated as Tab, instanceId: raw.instanceId };
 }
 
-export function Settings() {
+export function Settings(): JSX.Element {
   const [signedIn, setSignedIn] = useState<boolean>(() => isLoggedIn());
   const [displayName, setDisplayName] = useState<string | null>(
     () => loadPrimaryMembership()?.displayName ?? null,
+  );
+  const [activeCharacter, setActiveCharacter] = useState<ActiveCharacter | null>(
+    () => loadActiveCharacter(),
   );
   const [feed, setFeed] = useState<DropFeedEntry[]>(() => loadFeed());
   const [signInPending, setSignInPending] = useState(false);
@@ -55,9 +82,6 @@ export function Settings() {
   const [typeFilter, setTypeFilter] = useState<DropTypeFilter>('all');
   const [matchFilter, setMatchFilter] = useState<DropMatchFilter>('all');
   const [showExotic, setShowExotic] = useState(true);
-  // Brief #12: Drop Log tier filter visibility set. Defaults to all-on so tier
-  // chips don't silently hide drops on first paint. Component-local state to
-  // match the existing showA/showB pattern (no persistence across reloads).
   const [visibleTiers, setVisibleTiers] = useState<Set<TierLetter>>(
     () => new Set<TierLetter>(['S', 'A', 'B', 'C', 'D', 'F']),
   );
@@ -93,12 +117,15 @@ export function Settings() {
         setDisplayName(value?.displayName ?? null);
       },
     );
+    const unsubChar = onKeyChanged<ActiveCharacter | null>(
+      'auth.activeCharacter',
+      (value) => {
+        setActiveCharacter(value ?? null);
+      },
+    );
     const unsubAuthState = onKeyChanged<AuthState>('auth.state', (value) => {
       const next = value ?? 'signed-out';
       setAuthState(next);
-      // Re-show the banner on every fresh expiry transition. Re-signing in
-      // moves to 'signed-in' and re-expiring later flips back to 'expired';
-      // this reset ensures the user sees the banner the second time too.
       setExpiredBannerDismissed(false);
     });
     const unsubManifest = onKeyChanged<boolean>('manifest.ready', (value) => {
@@ -120,6 +147,7 @@ export function Settings() {
       unsubFeed();
       unsubTokens();
       unsubMembership();
+      unsubChar();
       unsubAuthState();
       unsubManifest();
       unsubManifestProgress();
@@ -133,8 +161,8 @@ export function Settings() {
   }, []);
 
   // Consume pendingNavigation (written by the popup when a user clicks a drop
-  // row). Switches tab, scrolls to the target row, briefly highlights it, then
-  // clears the storage key so a dashboard reload doesn't re-trigger.
+  // row). Switches tab, scrolls to the target row, briefly highlights it,
+  // then clears the storage key so a dashboard reload doesn't re-trigger.
   useEffect(() => {
     if (!manifestReady) return;
     const nav = loadAndMigratePendingNavigation();
@@ -144,7 +172,6 @@ export function Settings() {
     if (nav.instanceId) {
       const id = nav.instanceId;
       setHighlightInstanceId(id);
-      // Defer scroll until after React renders the tab change.
       requestAnimationFrame(() => {
         const el = document.querySelector(`[data-instance-id="${CSS.escape(id)}"]`);
         if (el instanceof HTMLElement) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -155,18 +182,14 @@ export function Settings() {
     return undefined;
   }, [manifestReady]);
 
-  // Fetch armor taxonomy (sets/archetypes/tertiaries) from the SW once the
-  // manifest is ready. Cached at the Settings level so switching between
-  // Drops and Rules tabs doesn't re-request. Re-fetched if manifest ever
-  // transitions back to loading (shouldn't, but defensive).
   useEffect(() => {
     if (!manifestReady) return;
     if (taxonomy !== null) return;
     let cancelled = false;
     void (async () => {
-      const resp = await send<{ ok: boolean; payload: ArmorTaxonomyPayload }>(
-        { type: 'get-armor-taxonomy' },
-      );
+      const resp = await send<{ ok: boolean; payload: ArmorTaxonomyPayload }>({
+        type: 'get-armor-taxonomy',
+      });
       if (!cancelled && resp?.ok) setTaxonomy(resp.payload);
     })();
     return () => {
@@ -212,113 +235,44 @@ export function Settings() {
   }
 
   return (
-    <div className="min-h-screen bg-bg-primary text-text-primary">
-      {showExpiredBanner && (
-        <SessionExpiredBanner
-          onSignIn={handleSignIn}
-          onDismiss={() => setExpiredBannerDismissed(true)}
-          pending={signInPending}
+    <div className="d-cursor-root relative min-h-screen bg-d-bg-base text-d-text font-outfit">
+      <SacredBg opacity={0.4} />
+      <div className="relative z-10">
+        {showExpiredBanner && (
+          <SessionExpiredBanner
+            onSignIn={handleSignIn}
+            onDismiss={() => setExpiredBannerDismissed(true)}
+            pending={signInPending}
+          />
+        )}
+        {showAutolockFailedBanner && autolockFailed && (
+          <AutolockFailedBanner
+            itemName={autolockFailed.itemName}
+            onDismiss={() => setAutolockFailedDismissedAt(autolockFailed.at)}
+          />
+        )}
+
+        <TopBar
+          signedIn={signedIn}
+          displayName={displayName}
+          activeCharacter={activeCharacter}
+          version={pkg.version}
+          onSignOut={handleSignOut}
         />
-      )}
-      {showAutolockFailedBanner && autolockFailed && (
-        <AutolockFailedBanner
-          itemName={autolockFailed.itemName}
-          onDismiss={() => setAutolockFailedDismissedAt(autolockFailed.at)}
-        />
-      )}
-      <header className="border-b border-bg-border">
-        <div className="max-w-5xl mx-auto px-6 py-5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img
-              src={chrome.runtime.getURL('icons/icon48.png')}
-              alt=""
-              className="w-9 h-9 rounded"
-              aria-hidden="true"
+
+        <main className="max-w-[1120px] mx-auto px-7 py-7 space-y-6">
+          {!signedIn ? (
+            <SignInPanel
+              pending={signInPending}
+              error={signInError}
+              onSignIn={handleSignIn}
             />
-            <div>
-              <div className="text-lg font-semibold leading-tight">Cryptarch</div>
-              <div className="text-xs text-text-muted">Loot Appraiser · Chrome edition</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <a
-              href="https://ko-fi.com/frailrain"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Support on Ko-fi"
-              className="text-xs text-text-muted hover:text-rahool-blue"
-            >
-              Buy me a coffee ☕
-            </a>
-            {signedIn && displayName && (
-              <span className="text-sm text-text-muted">Signed in as {displayName}</span>
-            )}
-            {signedIn ? (
-              <button
-                onClick={handleSignOut}
-                className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary"
-              >
-                Sign out
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </header>
+          ) : (
+            <>
+              <TabNav active={tab} onChange={setTab} />
 
-      <main className="max-w-5xl mx-auto px-6 py-6 space-y-6">
-        {!signedIn ? (
-          <div className="rounded-lg border border-bg-border bg-bg-card p-8 text-center space-y-4">
-            <h2 className="text-lg font-semibold">Sign in with Bungie.net</h2>
-            <p className="text-sm text-text-muted max-w-md mx-auto">
-              Cryptarch needs read access to your Destiny 2 inventory so it can detect new
-              drops. You'll be prompted to authorize in a Chrome popup.
-            </p>
-            <button
-              onClick={handleSignIn}
-              disabled={signInPending}
-              className="inline-flex items-center px-4 py-2 rounded bg-rahool-blue/20 text-rahool-blue border border-rahool-blue/40 hover:bg-rahool-blue/30 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {signInPending ? 'Waiting for Bungie…' : 'Sign in with Bungie.net'}
-            </button>
-            {signInError && (
-              <div className="text-xs text-red-400">{signInError}</div>
-            )}
-          </div>
-        ) : (
-          <>
-            <nav className="flex gap-1 border-b border-bg-border">
-              <TabButton active={tab === 'drops'} onClick={() => setTab('drops')}>
-                Drops
-              </TabButton>
-              <TabButton active={tab === 'armor'} onClick={() => setTab('armor')}>
-                Armor
-              </TabButton>
-              <TabButton active={tab === 'weapons'} onClick={() => setTab('weapons')}>
-                Weapons
-              </TabButton>
-            </nav>
-
-            {tab === 'drops' && (
-              <>
-                <div className="rounded-lg border border-bg-border bg-bg-card p-4 flex items-center justify-between">
-                  <div className="text-sm text-text-muted">
-                    Updates every 30ish seconds. New drops appear below as Cryptarch scores them.
-                  </div>
-                  <button
-                    onClick={handlePollNow}
-                    className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary"
-                  >
-                    Poll now
-                  </button>
-                </div>
-
-                {/* Brief #12.5 + #22.1: rendered only in development. Vite
-                    replaces import.meta.env.DEV with a literal at build time,
-                    so prod builds tree-shake the panel + the SW test handlers
-                    it talks to. Re-enable in dev with `npm run build:dev`. */}
-                {import.meta.env.DEV && <WishlistTestPanel />}
-
-                <DropLogPanel
+              {tab === 'drops' && (
+                <DropsTab
                   feed={feed}
                   typeFilter={typeFilter}
                   matchFilter={matchFilter}
@@ -344,27 +298,128 @@ export function Settings() {
                   onLockDrop={(instanceId) => {
                     void send({ type: 'lock-drop', payload: { instanceId } });
                   }}
+                  onPollNow={handlePollNow}
                 />
-              </>
-            )}
+              )}
 
-            {tab === 'armor' && (
-              <RulesPanel
-                taxonomy={taxonomy}
-                autoLockOnArmorMatch={autoLockOnArmorMatch}
-                onAutoLockToggle={handleAutoLockToggle}
-              />
-            )}
+              {tab === 'armor' && (
+                <ArmorTab
+                  taxonomy={taxonomy}
+                  autoLockOnArmorMatch={autoLockOnArmorMatch}
+                  onAutoLockToggle={handleAutoLockToggle}
+                />
+              )}
 
-            {tab === 'weapons' && <WeaponsPanel />}
-          </>
-        )}
+              {tab === 'settings' && (
+                <SettingsTab
+                  displayName={displayName}
+                  onSignOut={handleSignOut}
+                />
+              )}
+            </>
+          )}
 
-        <footer className="text-xs text-text-muted text-center pt-6">
-          Cryptarch · Chrome edition · v0.2.0
-        </footer>
-      </main>
+          <Divider gold filled />
+          <footer className="text-d-11 uppercase tracking-d-wide text-d-text-dim text-center pt-2">
+            Cryptarch · Loot Appraiser · v{pkg.version}
+          </footer>
+        </main>
+      </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*                            Sub-components                           */
+/* ------------------------------------------------------------------ */
+
+function TopBar({
+  signedIn,
+  displayName,
+  activeCharacter,
+  version,
+  onSignOut,
+}: {
+  signedIn: boolean;
+  displayName: string | null;
+  activeCharacter: ActiveCharacter | null;
+  version: string;
+  onSignOut: () => void;
+}): JSX.Element {
+  const emblemIcon = activeCharacter?.emblemPath
+    ? activeCharacter.emblemPath.startsWith('http')
+      ? activeCharacter.emblemPath
+      : `https://www.bungie.net${activeCharacter.emblemPath}`
+    : null;
+  return (
+    <header className="border-b border-d-hairline">
+      <div className="max-w-[1120px] mx-auto px-7 py-4 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <img
+            src={chrome.runtime.getURL('icons/icon48.png')}
+            alt=""
+            className="w-7 h-7 border border-d-gold-line flex-shrink-0"
+            aria-hidden
+          />
+          <div className="flex flex-col leading-tight min-w-0">
+            <span className="text-d-14 font-light uppercase tracking-d-hero text-d-text truncate">
+              Cryptarch
+            </span>
+            <span className="text-d-10 uppercase tracking-d-wide text-d-text-muted">
+              Loot Appraiser · v{version}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {signedIn && displayName && (
+            <div className="flex items-center gap-2 text-d-12 uppercase tracking-d-wide text-d-text-sec">
+              {emblemIcon ? (
+                <img
+                  src={emblemIcon}
+                  alt=""
+                  aria-hidden
+                  className="w-8 h-8 border border-d-hairline flex-shrink-0"
+                  style={{ objectFit: 'cover' }}
+                />
+              ) : (
+                <span
+                  aria-hidden
+                  className={`w-[6px] h-[6px] ${signedIn ? 'bg-d-keep' : 'bg-d-text-dim'}`}
+                />
+              )}
+              <span className="truncate max-w-[220px]">{displayName}</span>
+            </div>
+          )}
+          {signedIn && (
+            <Btn variant="ghost" small onClick={onSignOut}>
+              Sign Out
+            </Btn>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function TabNav({
+  active,
+  onChange,
+}: {
+  active: Tab;
+  onChange: (t: Tab) => void;
+}): JSX.Element {
+  return (
+    <nav className="flex border-b border-d-hairline -mx-7 px-7">
+      <TabButton active={active === 'drops'} onClick={() => onChange('drops')}>
+        Drops
+      </TabButton>
+      <TabButton active={active === 'armor'} onClick={() => onChange('armor')}>
+        Armor
+      </TabButton>
+      <TabButton active={active === 'settings'} onClick={() => onChange('settings')}>
+        Settings
+      </TabButton>
+    </nav>
   );
 }
 
@@ -376,17 +431,177 @@ function TabButton({
   active: boolean;
   onClick: () => void;
   children: React.ReactNode;
-}) {
+}): JSX.Element {
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-2 text-sm border-b-2 -mb-px ${
+      className={`px-6 py-3.5 text-d-12 font-medium uppercase tracking-d-widest border-b-2 -mb-px transition-colors duration-d-fast ${
         active
-          ? 'border-rahool-blue text-text-primary'
-          : 'border-transparent text-text-muted hover:text-text-primary'
+          ? 'border-d-gold text-d-gold d-text-shadow-tab'
+          : 'border-transparent text-d-text-muted hover:text-d-text'
       }`}
     >
       {children}
     </button>
+  );
+}
+
+/* ----- Sign-in panel (shown when !signedIn) ----- */
+
+function SignInPanel({
+  pending,
+  error,
+  onSignIn,
+}: {
+  pending: boolean;
+  error: string | null;
+  onSignIn: () => void;
+}): JSX.Element {
+  return (
+    <Panel accent="gold" ticks padded={false} className="text-center px-8 py-10">
+      <div className="space-y-4">
+        <Headline size="md">Sign in with Bungie.net</Headline>
+        <p className="text-d-12 text-d-text-sec max-w-md mx-auto leading-relaxed">
+          Cryptarch needs read access to your Destiny 2 inventory so it can detect new
+          drops. You'll be prompted to authorize in a Chrome popup.
+        </p>
+        <div className="flex justify-center">
+          <BracketBtn onClick={onSignIn} disabled={pending}>
+            {pending ? 'Waiting for Bungie…' : 'Sign in with Bungie.net'}
+          </BracketBtn>
+        </div>
+        {error && (
+          <div className="text-d-11 text-d-shard uppercase tracking-d-wide">{error}</div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+/* ----- Drops tab ----- */
+
+interface DropsTabProps {
+  feed: DropFeedEntry[];
+  typeFilter: DropTypeFilter;
+  matchFilter: DropMatchFilter;
+  showExotic: boolean;
+  visibleTiers: Set<TierLetter>;
+  nowTick: number;
+  highlightInstanceId: string | null;
+  onTypeFilterChange: (t: DropTypeFilter) => void;
+  onMatchFilterChange: (m: DropMatchFilter) => void;
+  onToggleExotic: () => void;
+  onToggleTier: (tier: TierLetter) => void;
+  onClearFeed: () => void;
+  onLockDrop: (instanceId: string) => void;
+  onPollNow: () => void;
+}
+
+function DropsTab(props: DropsTabProps): JSX.Element {
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <Headline size="lg">Drop Log</Headline>
+        <Btn variant="ghost" small onClick={props.onPollNow}>
+          Poll Now
+        </Btn>
+      </div>
+      <p className="text-d-12 text-d-text-muted uppercase tracking-d-wide">
+        Updates every 30ish seconds. New drops appear below as Cryptarch scores them.
+      </p>
+
+      {import.meta.env.MODE === 'development' && <WishlistTestPanel />}
+
+      <Panel accent="neutral" ticks>
+        <DropLogPanel
+          feed={props.feed}
+          typeFilter={props.typeFilter}
+          matchFilter={props.matchFilter}
+          showExotic={props.showExotic}
+          visibleTiers={props.visibleTiers}
+          nowTick={props.nowTick}
+          highlightInstanceId={props.highlightInstanceId}
+          onTypeFilterChange={props.onTypeFilterChange}
+          onMatchFilterChange={props.onMatchFilterChange}
+          onToggleExotic={props.onToggleExotic}
+          onToggleTier={props.onToggleTier}
+          onClearFeed={props.onClearFeed}
+          onLockDrop={props.onLockDrop}
+        />
+      </Panel>
+    </div>
+  );
+}
+
+/* ----- Armor tab ----- */
+
+function ArmorTab({
+  taxonomy,
+  autoLockOnArmorMatch,
+  onAutoLockToggle,
+}: {
+  taxonomy: ArmorTaxonomyPayload | null;
+  autoLockOnArmorMatch: boolean;
+  onAutoLockToggle: (next: boolean) => void;
+}): JSX.Element {
+  return (
+    <div className="space-y-5">
+      <Headline size="lg">Armor Rules</Headline>
+      <p className="text-d-12 text-d-text-muted uppercase tracking-d-wide">
+        Rules describe which armor drops you want auto-locked.
+      </p>
+      <Panel accent="gold" ticks>
+        <RulesPanel
+          taxonomy={taxonomy}
+          autoLockOnArmorMatch={autoLockOnArmorMatch}
+          onAutoLockToggle={onAutoLockToggle}
+        />
+      </Panel>
+    </div>
+  );
+}
+
+/* ----- Settings tab ----- */
+
+function SettingsTab({
+  displayName,
+  onSignOut,
+}: {
+  displayName: string | null;
+  onSignOut: () => void;
+}): JSX.Element {
+  return (
+    <div className="space-y-6">
+      <Headline size="lg">Notification Settings</Headline>
+
+      <div className="space-y-2">
+        <Headline size="md">Wishlist Coverage</Headline>
+        {/* Brief #23 follow-up: keep the default panel padding so the inner
+            Notification Settings + Custom GitHub headers (each only px-1
+            self-padded) get real breathing room from the panel border. */}
+        <Panel accent="gold" ticks>
+          <WeaponsPanel />
+        </Panel>
+      </div>
+
+      <div className="space-y-2">
+        <Headline size="md">Bungie Account</Headline>
+        <Panel accent="neutral">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-1 min-w-0">
+              <span className="text-d-11 uppercase tracking-d-wide text-d-text-muted">
+                Signed in as
+              </span>
+              <span className="text-d-14 text-d-text truncate">
+                {displayName ?? '—'}
+              </span>
+            </div>
+            <Btn variant="danger" onClick={onSignOut}>
+              Disconnect
+            </Btn>
+          </div>
+        </Panel>
+      </div>
+    </div>
   );
 }

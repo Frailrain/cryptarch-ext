@@ -1,4 +1,5 @@
 import type {
+  CharlesSourceConfig,
   NewItemDrop,
   TierFilter,
   TierLetter,
@@ -6,6 +7,7 @@ import type {
 } from '@/shared/types';
 import type { ImportedWishList, WishListEntry } from '@/core/scoring/types';
 import {
+  loadCharlesSourceConfig,
   loadWeaponFilterConfig,
   loadWishlistSources,
 } from '@/core/storage/scoring-config';
@@ -162,6 +164,14 @@ export function matchDropAgainstWishlists(
     return { keeperMatches: [], winner: null };
   }
 
+  // Brief #25.1: pre-#25.1 the user's minTier+PPC selectors picked a
+  // tier-specific Charles file (MR{tier}_PPC{ppc}). Now Cryptarch caches
+  // the MRF_PPC0 superset and applies those selectors here, at score
+  // time. Charles-only — Voltron and custom sources don't share the
+  // tier/PPC semantics and bypass the gate (most Voltron entries are
+  // untiered and have a different required-perk shape).
+  const charlesConfig = loadCharlesSourceConfig();
+
   const activePerks = new Set<number>();
   for (const p of drop.perks) {
     if (p.isActive) activePerks.add(p.plugHash);
@@ -180,7 +190,7 @@ export function matchDropAgainstWishlists(
   let firstTrash: { entry: WishListEntry; sourceName: string } | null = null;
 
   for (const list of lists) {
-    const perListResult = matchDropAgainstSingleList(drop, list, resolvedPerks);
+    const perListResult = matchDropAgainstSingleList(drop, list, resolvedPerks, charlesConfig);
     if (perListResult.keeper) {
       // Brief #14 Part B: copy requiredPerks onto the match so the dashboard
       // can dim non-tagged rolled perks. Empty when the wishlist entry had
@@ -242,12 +252,24 @@ function matchDropAgainstSingleList(
   drop: NewItemDrop,
   list: ImportedWishList,
   resolvedPerks: Set<number>,
+  charlesConfig: CharlesSourceConfig,
 ): PerListResult {
   let perListKeeper: WishListEntry | null = null;
   let perListTrash: WishListEntry | null = null;
+  const isCharles = list.id === CHARLES_SOURCE_ID;
 
   for (const entry of list.entries) {
     if (entry.itemHash !== -1 && entry.itemHash !== drop.itemHash) continue;
+
+    // Brief #25.1: Charles-only score-time filter for minTier and PPC.
+    // passesTierFilter returns false for untiered entries when a tier is
+    // set, which is the correct semantic here — Charles always tier-tags
+    // his entries, so an untiered Charles row would be malformed and
+    // shouldn't match under any non-'all' threshold.
+    if (isCharles) {
+      if (!passesTierFilter(entry.weaponTier, charlesConfig.minTier)) continue;
+      if (entry.requiredPerks.length < charlesConfig.ppc) continue;
+    }
 
     if (entry.requiredPerks.length > 0) {
       let allPresent = true;

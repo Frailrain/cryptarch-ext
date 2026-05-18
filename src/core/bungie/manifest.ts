@@ -1,38 +1,61 @@
+// Brief #25 — IDB-backed Bungie manifest.
+//
+// Before this brief: the full DestinyInventoryItemDefinition (~30 k items,
+// ~10 KB each, ~300 MB+ inflated) was held as a module-level Record<number, def>
+// in the service worker. Every poll cycle's "are we ready" check and every
+// `lookupItem(hash)` call dereferenced into this graph. Stop-the-world GC
+// pauses when the graph rotated (manifest version bump, or anything that
+// rebuilt it) measured 15-30 seconds; rapid wishlist-config clicks could
+// transiently double the graph and push SW memory above 8 GB.
+//
+// After this brief: each definition is its own IDB record keyed by hash.
+// The full manifest never lives in JS as a single object graph. Hot-path
+// lookups become `await idbGet(STORES.manifestItems, hash)` — a sub-ms
+// point query that returns a single ~3-6 KB stripped record. Bulk iterators
+// (`iterateItems`) stream via cursor, never materializing the whole table.
+// In-memory caches are limited to:
+//   - cachedVersion: string | null (~16 bytes)
+//   - enhancedPerkMapCache: Map<number, number> (~2k-4k pairs, ~150 KB)
+//
+// Field stripping at write time drops manifest fields Cryptarch never reads
+// (description text, backgroundColor, action, talentGrid, translationBlock,
+// loreHash, preview). Saves ~30-40 % of per-item disk size vs raw Bungie
+// payload — and more importantly, keeps the IDB transaction buffers small.
+
 import {
   STORES,
-  idbDelete,
+  idbBulkPut,
+  idbClear,
+  idbForEach,
   idbGet,
-  idbListKeys,
   idbPut,
+  type StoreName,
 } from '@/core/storage/indexeddb';
 import { error as logError } from '@/adapters/logger';
 import { fetchManifestComponent, getManifestInfo } from './api';
 import type { DestinyInventoryItem, DestinyPlugSet, DestinyStat } from './types';
 
 const LOCALE = 'en';
-// Brief #14 Part C added DestinyPlugSetDefinition. First boot after the
-// upgrade will re-download the manifest because the previously cached version
-// doesn't include the new component — users see the manifest loading card
-// once. The plug-set table is the source of truth for the random-roll perk
-// pool that the perk-pool cache resolves on click.
+
 const COMPONENTS_WE_NEED = [
   'DestinyInventoryItemDefinition',
   'DestinyStatDefinition',
   'DestinyPlugSetDefinition',
 ] as const;
-
 type ComponentName = (typeof COMPONENTS_WE_NEED)[number];
 
-export interface ManifestCache {
+// Number of stripped entries per IDB transaction. Bigger = fewer transactions
+// (faster) but larger transaction buffers. 250 keeps each transaction below
+// ~1.5 MB worth of stripped records, well within IDB sanity.
+const BATCH_SIZE = 250;
+
+interface ManifestMeta {
   version: string;
   locale: string;
-  definitions: {
-    DestinyInventoryItemDefinition: Record<number, DestinyInventoryItem>;
-    DestinyStatDefinition: Record<number, DestinyStat>;
-    DestinyPlugSetDefinition: Record<number, DestinyPlugSet>;
-  };
   downloadedAt: number;
 }
+
+// ---------- Progress API (unchanged from pre-#25) ----------
 
 export type ManifestStage =
   | 'idle'
@@ -53,24 +76,13 @@ export interface ManifestProgress {
 type ProgressListener = (p: ManifestProgress) => void;
 const progressListeners = new Set<ProgressListener>();
 
-// Persist a 'ready' flag in chrome.storage so the options page can decide
-// whether to show the first-boot loading card. Write directly — the global
-// onChanged listener in the storage adapter will update any in-memory cache.
 function markManifestReady(): void {
   void chrome.storage.local.set({ 'cryptarch:manifest.ready': true });
 }
 
-// Mirror every progress event to chrome.storage so the options-page loading
-// card can render real stage/pct feedback instead of an indeterminate spinner.
-// Registered unconditionally at module load so both SW and page contexts
-// participate — only the SW will actually emit progress, but the write is
-// idempotent from either side.
 progressListeners.add((p) => {
   void chrome.storage.local.set({ 'cryptarch:manifest.progress': p });
 });
-
-let cache: ManifestCache | null = null;
-let loadingPromise: Promise<ManifestCache> | null = null;
 
 function emit(progress: ManifestProgress): void {
   for (const l of progressListeners) {
@@ -89,103 +101,335 @@ export function onManifestProgress(cb: ProgressListener): () => void {
   };
 }
 
-export async function getManifest(): Promise<ManifestCache> {
-  if (cache) return cache;
-  if (loadingPromise) return loadingPromise;
+// ---------- Field strippers ----------
+//
+// Keep only what Cryptarch's runtime actually reads. The TS types in
+// `types.ts` already declare a partial view of the Bungie record; these
+// strippers enforce that view at write time so unused fields don't sit in
+// IDB indefinitely. Strings get re-allocated through the JSON-parse
+// boundary so there's no V8 slice-view retention from the parent JSON.
 
-  loadingPromise = (async () => {
+function stripItemDef(raw: unknown): DestinyInventoryItem | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.hash !== 'number') return null;
+
+  const dp = (r.displayProperties as Record<string, unknown> | undefined) ?? {};
+  const stripped: DestinyInventoryItem = {
+    hash: r.hash,
+    displayProperties: {
+      name: typeof dp.name === 'string' ? dp.name : '',
+      description: '', // brief #25: drop description, never read at runtime
+      hasIcon: dp.hasIcon === true,
+    },
+    itemType: typeof r.itemType === 'number' ? r.itemType : 0,
+    itemSubType: typeof r.itemSubType === 'number' ? r.itemSubType : 0,
+  };
+  if (typeof dp.icon === 'string') stripped.displayProperties.icon = dp.icon;
+  if (typeof r.itemTypeDisplayName === 'string') {
+    stripped.itemTypeDisplayName = r.itemTypeDisplayName;
+  }
+  if (typeof r.itemTypeAndTierDisplayName === 'string') {
+    stripped.itemTypeAndTierDisplayName = r.itemTypeAndTierDisplayName;
+  }
+  const inv = r.inventory as Record<string, unknown> | undefined;
+  if (inv && typeof inv === 'object') {
+    stripped.inventory = {
+      tierType: typeof inv.tierType === 'number' ? inv.tierType : 0,
+      tierTypeName: typeof inv.tierTypeName === 'string' ? inv.tierTypeName : '',
+      bucketTypeHash: typeof inv.bucketTypeHash === 'number' ? inv.bucketTypeHash : 0,
+    };
+  }
+  if (typeof r.defaultDamageType === 'number') stripped.defaultDamageType = r.defaultDamageType;
+  if (typeof r.collectibleHash === 'number') stripped.collectibleHash = r.collectibleHash;
+
+  const sockets = r.sockets as Record<string, unknown> | undefined;
+  const socketEntries = sockets?.socketEntries;
+  if (Array.isArray(socketEntries)) {
+    type SocketEntry = NonNullable<
+      NonNullable<DestinyInventoryItem['sockets']>['socketEntries']
+    >[number];
+    stripped.sockets = {
+      socketEntries: socketEntries.map((eRaw: unknown) => {
+        const e = (eRaw as Record<string, unknown>) ?? {};
+        const out: SocketEntry = {
+          socketTypeHash: typeof e.socketTypeHash === 'number' ? e.socketTypeHash : 0,
+        };
+        if (typeof e.singleInitialItemHash === 'number') {
+          out.singleInitialItemHash = e.singleInitialItemHash;
+        }
+        if (Array.isArray(e.reusablePlugItems)) {
+          out.reusablePlugItems = e.reusablePlugItems
+            .map((p: unknown) => {
+              const pr = (p as Record<string, unknown>) ?? {};
+              return typeof pr.plugItemHash === 'number'
+                ? { plugItemHash: pr.plugItemHash }
+                : null;
+            })
+            .filter((x): x is { plugItemHash: number } => x !== null);
+        }
+        if (typeof e.randomizedPlugSetHash === 'number') {
+          out.randomizedPlugSetHash = e.randomizedPlugSetHash;
+        }
+        if (typeof e.reusablePlugSetHash === 'number') {
+          out.reusablePlugSetHash = e.reusablePlugSetHash;
+        }
+        return out;
+      }),
+    };
+  }
+
+  const plug = r.plug as Record<string, unknown> | undefined;
+  if (plug && typeof plug === 'object') {
+    stripped.plug = {};
+    if (typeof plug.plugCategoryIdentifier === 'string') {
+      stripped.plug.plugCategoryIdentifier = plug.plugCategoryIdentifier;
+    }
+    if (typeof plug.plugCategoryHash === 'number') {
+      stripped.plug.plugCategoryHash = plug.plugCategoryHash;
+    }
+  }
+  return stripped;
+}
+
+function stripStatDef(raw: unknown): DestinyStat | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.hash !== 'number') return null;
+  const dp = (r.displayProperties as Record<string, unknown> | undefined) ?? {};
+  const stripped: DestinyStat = {
+    hash: r.hash,
+    displayProperties: {
+      name: typeof dp.name === 'string' ? dp.name : '',
+      description: '',
+      hasIcon: dp.hasIcon === true,
+    },
+  };
+  if (typeof dp.icon === 'string') stripped.displayProperties.icon = dp.icon;
+  return stripped;
+}
+
+function stripPlugSetDef(raw: unknown): DestinyPlugSet | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.hash !== 'number') return null;
+  const items = Array.isArray(r.reusablePlugItems) ? r.reusablePlugItems : [];
+  return {
+    hash: r.hash,
+    reusablePlugItems: items
+      .map((p: unknown) => {
+        const pr = (p as Record<string, unknown>) ?? {};
+        if (typeof pr.plugItemHash !== 'number') return null;
+        return {
+          plugItemHash: pr.plugItemHash,
+          currentlyCanRoll: pr.currentlyCanRoll === true,
+        };
+      })
+      .filter((x): x is { plugItemHash: number; currentlyCanRoll: boolean } => x !== null),
+  };
+}
+
+// ---------- Write path ----------
+
+type Stripper<T> = (raw: unknown) => T | null;
+
+async function writeComponentToIdb<T>(
+  store: StoreName,
+  raw: Record<string, unknown>,
+  stripper: Stripper<T>,
+): Promise<void> {
+  let batch: Array<readonly [number, T]> = [];
+  for (const [hashStr, def] of Object.entries(raw)) {
+    const stripped = stripper(def);
+    if (!stripped) continue;
+    const hash = Number(hashStr);
+    if (!Number.isFinite(hash)) continue;
+    batch.push([hash, stripped]);
+    if (batch.length >= BATCH_SIZE) {
+      await idbBulkPut(store, batch);
+      batch = [];
+    }
+  }
+  if (batch.length > 0) {
+    await idbBulkPut(store, batch);
+  }
+}
+
+// ---------- Public API ----------
+
+let cachedVersion: string | null = null;
+let cachedVersionPromise: Promise<string | null> | null = null;
+let ensurePromise: Promise<void> | null = null;
+
+/**
+ * Idempotent: ensures the per-entry manifest stores in IDB reflect the
+ * current Bungie manifest version. No-op when the cached meta version
+ * matches Bungie's. Otherwise downloads each component, strips entries,
+ * and bulk-writes to IDB. The full parsed component never escapes this
+ * function's local scope, so V8 GCs the ~30 MB transient blob after each
+ * component finishes writing.
+ *
+ * Replaces the pre-#25 `getManifest(): Promise<ManifestCache>` whose return
+ * value (the full graph) was the source of the memory problem. Callers that
+ * previously did `const m = await getManifest(); m.definitions.X[hash]`
+ * should switch to `await ensureManifestReady(); await lookupX(hash)`.
+ */
+export async function ensureManifestReady(): Promise<void> {
+  if (ensurePromise) return ensurePromise;
+  ensurePromise = (async () => {
     emit({ stage: 'checking', pct: 0, version: null });
-    const info = await getManifestInfo();
-    const version = info.version;
 
-    const existing = await idbGet<ManifestCache>(STORES.manifest, version);
-    if (existing) {
-      cache = existing;
+    let info: Awaited<ReturnType<typeof getManifestInfo>>;
+    try {
+      info = await getManifestInfo();
+    } catch (err) {
+      emit({
+        stage: 'error',
+        pct: 0,
+        version: null,
+        error: err instanceof Error ? err.message : 'Failed to fetch manifest info',
+      });
+      throw err;
+    }
+    const bungieVersion = info.version;
+
+    const meta = await idbGet<ManifestMeta>(STORES.manifestMeta, 'current');
+    if (meta && meta.version === bungieVersion && meta.locale === LOCALE) {
+      cachedVersion = bungieVersion;
       markManifestReady();
-      emit({ stage: 'done', pct: 100, version });
-      return existing;
+      emit({ stage: 'done', pct: 100, version: bungieVersion });
+      return;
     }
 
     const paths = info.jsonWorldComponentContentPaths?.[LOCALE];
     if (!paths) {
-      const err = `No manifest paths for locale ${LOCALE}`;
-      emit({ stage: 'error', pct: 0, version, error: err });
-      throw new Error(err);
+      const errMsg = `No manifest paths for locale ${LOCALE}`;
+      emit({ stage: 'error', pct: 0, version: bungieVersion, error: errMsg });
+      throw new Error(errMsg);
     }
 
-    emit({ stage: 'downloading', pct: 0, version });
+    emit({ stage: 'downloading', pct: 0, version: bungieVersion });
 
-    const downloaded: Partial<Record<ComponentName, unknown>> = {};
+    // Wipe stale entries before writing fresh — partial overlap of old+new
+    // versions would make iterateItems return inconsistent results during
+    // the upgrade window.
+    await idbClear(STORES.manifestItems);
+    await idbClear(STORES.manifestStats);
+    await idbClear(STORES.manifestPlugSets);
+    // Invalidate any derived caches built from the old manifest.
+    enhancedPerkMapCache = null;
+    enhancedPerkMapPromise = null;
+
+    const componentStores: Record<ComponentName, StoreName> = {
+      DestinyInventoryItemDefinition: STORES.manifestItems,
+      DestinyStatDefinition: STORES.manifestStats,
+      DestinyPlugSetDefinition: STORES.manifestPlugSets,
+    };
+    // Typed-erased map of stripper per component name. Each writeComponentToIdb
+    // call narrows the type per its `store` argument.
+    const componentStrippers: Record<ComponentName, Stripper<unknown>> = {
+      DestinyInventoryItemDefinition: stripItemDef as Stripper<unknown>,
+      DestinyStatDefinition: stripStatDef as Stripper<unknown>,
+      DestinyPlugSetDefinition: stripPlugSetDef as Stripper<unknown>,
+    };
+
     for (let i = 0; i < COMPONENTS_WE_NEED.length; i++) {
       const name = COMPONENTS_WE_NEED[i];
       const relPath = paths[name];
       if (!relPath) {
-        const err = `Missing manifest component path: ${name}`;
-        emit({ stage: 'error', pct: 0, version, error: err });
-        throw new Error(err);
+        const errMsg = `Missing manifest component path: ${name}`;
+        emit({ stage: 'error', pct: 0, version: bungieVersion, error: errMsg });
+        throw new Error(errMsg);
       }
-      downloaded[name] = await fetchManifestComponent<unknown>(relPath);
+      // Fetch + parse the ~30 MB component. The Record<hash, def> lives
+      // in this local scope only. After writeComponentToIdb completes we
+      // null the reference so V8 can reclaim the transient blob before
+      // the next component starts.
+      let downloaded: Record<string, unknown> | null =
+        await fetchManifestComponent<Record<string, unknown>>(relPath);
+      await writeComponentToIdb(componentStores[name], downloaded, componentStrippers[name]);
+      downloaded = null;
+
       emit({
         stage: 'downloading',
         pct: Math.round(((i + 1) / COMPONENTS_WE_NEED.length) * 100),
-        version,
+        version: bungieVersion,
       });
     }
 
-    emit({ stage: 'parsing', pct: 100, version });
-    const built: ManifestCache = {
-      version,
-      locale: LOCALE,
-      definitions: {
-        DestinyInventoryItemDefinition:
-          (downloaded.DestinyInventoryItemDefinition as Record<number, DestinyInventoryItem>) ?? {},
-        DestinyStatDefinition:
-          (downloaded.DestinyStatDefinition as Record<number, DestinyStat>) ?? {},
-        DestinyPlugSetDefinition:
-          (downloaded.DestinyPlugSetDefinition as Record<number, DestinyPlugSet>) ?? {},
-      },
-      downloadedAt: Date.now(),
-    };
+    // Write meta LAST. Interrupted writes leave meta absent or pointing at
+    // the previous version, so the next ensureManifestReady detects the
+    // mismatch and retries cleanly.
+    emit({ stage: 'saving', pct: 100, version: bungieVersion });
+    await idbPut(
+      STORES.manifestMeta,
+      {
+        version: bungieVersion,
+        locale: LOCALE,
+        downloadedAt: Date.now(),
+      } satisfies ManifestMeta,
+      'current',
+    );
 
-    emit({ stage: 'saving', pct: 50, version });
-    await idbPut(STORES.manifest, built, version);
-
-    const keys = await idbListKeys(STORES.manifest);
-    for (const k of keys) {
-      if (k !== version) await idbDelete(STORES.manifest, k);
-    }
-
-    cache = built;
+    cachedVersion = bungieVersion;
     markManifestReady();
-    emit({ stage: 'done', pct: 100, version });
-    return built;
+    emit({ stage: 'done', pct: 100, version: bungieVersion });
   })();
-
   try {
-    return await loadingPromise;
+    await ensurePromise;
   } finally {
-    loadingPromise = null;
+    ensurePromise = null;
+  }
+}
+
+/**
+ * Returns the version string of the manifest currently stored in IDB, or
+ * null if the manifest hasn't been downloaded yet. Cheap — reads a single
+ * IDB record on first call, then serves from a tiny module-level cache.
+ * Used by perk-pool-cache to stamp snapshot keys with a manifest version.
+ */
+export async function getCurrentManifestVersion(): Promise<string | null> {
+  if (cachedVersion) return cachedVersion;
+  if (cachedVersionPromise) return cachedVersionPromise;
+  cachedVersionPromise = (async () => {
+    const meta = await idbGet<ManifestMeta>(STORES.manifestMeta, 'current');
+    if (meta) {
+      cachedVersion = meta.version;
+      return meta.version;
+    }
+    return null;
+  })();
+  try {
+    return await cachedVersionPromise;
+  } finally {
+    cachedVersionPromise = null;
   }
 }
 
 export async function lookupItem(hash: number): Promise<DestinyInventoryItem | null> {
-  const m = await getManifest();
-  return m.definitions.DestinyInventoryItemDefinition[hash] ?? null;
+  return idbGet<DestinyInventoryItem>(STORES.manifestItems, hash);
 }
 
 export async function lookupStat(hash: number): Promise<DestinyStat | null> {
-  const m = await getManifest();
-  return m.definitions.DestinyStatDefinition[hash] ?? null;
+  return idbGet<DestinyStat>(STORES.manifestStats, hash);
 }
 
 export async function lookupPlugSet(hash: number): Promise<DestinyPlugSet | null> {
-  const m = await getManifest();
-  return m.definitions.DestinyPlugSetDefinition[hash] ?? null;
+  return idbGet<DestinyPlugSet>(STORES.manifestPlugSets, hash);
 }
 
-export function getCachedManifest(): ManifestCache | null {
-  return cache;
+/**
+ * Stream every item definition through the callback via IDB cursor. The
+ * caller's callback runs once per item, never holding more than one
+ * definition in memory at a time. Used by taxonomy builders (armor sets,
+ * armor archetypes) and the enhanced-perk-map builder — anything that
+ * needs to scan all 30k items.
+ */
+export async function iterateItems(cb: (def: DestinyInventoryItem) => void): Promise<void> {
+  return idbForEach<DestinyInventoryItem>(STORES.manifestItems, (_key, def) => cb(def));
 }
+
+// ---------- Enhanced-perk map (small derived cache) ----------
 
 let enhancedPerkMapCache: Map<number, number> | null = null;
 let enhancedPerkMapPromise: Promise<Map<number, number>> | null = null;
@@ -208,51 +452,40 @@ function isEnhancedTypeDisplayName(def: DestinyInventoryItem): boolean {
   return (def.itemTypeDisplayName ?? '').startsWith('Enhanced ');
 }
 
-export function buildEnhancedPerkMap(manifest: ManifestCache): Map<number, number> {
-  const map = new Map<number, number>();
-  const items = manifest.definitions.DestinyInventoryItemDefinition;
-
-  // Build base index. A def is "base" when it isn't flagged enhanced by
-  // either pattern. First match per name wins (multiple base defs sharing
-  // a name is rare; when it happens we pick the first encountered).
-  const baseByName = new Map<string, number>();
-  for (const [hashStr, def] of Object.entries(items)) {
-    const name = def.displayProperties?.name;
-    if (!name) continue;
-    if (name.startsWith('Enhanced ')) continue;
-    if (isEnhancedTypeDisplayName(def)) continue;
-    if (!baseByName.has(name)) baseByName.set(name, Number(hashStr));
-  }
-
-  for (const [hashStr, def] of Object.entries(items)) {
-    const name = def.displayProperties?.name;
-    if (!name) continue;
-    let baseName: string | null = null;
-    if (name.startsWith('Enhanced ')) {
-      baseName = name.slice('Enhanced '.length);
-    } else if (isEnhancedTypeDisplayName(def)) {
-      // Modern enhancement: enhanced and base share the same name.
-      baseName = name;
-    } else {
-      continue;
-    }
-    const baseHash = baseByName.get(baseName);
-    if (baseHash !== undefined && baseHash !== Number(hashStr)) {
-      map.set(Number(hashStr), baseHash);
-    }
-  }
-
-  return map;
-}
-
 export async function getEnhancedPerkMap(): Promise<Map<number, number>> {
   if (enhancedPerkMapCache) return enhancedPerkMapCache;
   if (enhancedPerkMapPromise) return enhancedPerkMapPromise;
   enhancedPerkMapPromise = (async () => {
-    const m = await getManifest();
-    const built = buildEnhancedPerkMap(m);
-    enhancedPerkMapCache = built;
-    return built;
+    // Two cursor passes. Pass 1: build baseByName from non-enhanced defs.
+    // Pass 2: pair enhanced → base by name. Each pass streams one item at
+    // a time, so peak transient memory stays in the small-Map range.
+    const baseByName = new Map<string, number>();
+    await iterateItems((def) => {
+      const name = def.displayProperties?.name;
+      if (!name) return;
+      if (name.startsWith('Enhanced ')) return;
+      if (isEnhancedTypeDisplayName(def)) return;
+      if (!baseByName.has(name)) baseByName.set(name, def.hash);
+    });
+    const map = new Map<number, number>();
+    await iterateItems((def) => {
+      const name = def.displayProperties?.name;
+      if (!name) return;
+      let baseName: string | null = null;
+      if (name.startsWith('Enhanced ')) {
+        baseName = name.slice('Enhanced '.length);
+      } else if (isEnhancedTypeDisplayName(def)) {
+        baseName = name;
+      } else {
+        return;
+      }
+      const baseHash = baseByName.get(baseName);
+      if (baseHash !== undefined && baseHash !== def.hash) {
+        map.set(def.hash, baseHash);
+      }
+    });
+    enhancedPerkMapCache = map;
+    return map;
   })();
   try {
     return await enhancedPerkMapPromise;

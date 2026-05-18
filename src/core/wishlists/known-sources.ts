@@ -1,16 +1,23 @@
 import type { CharlesSourceConfig, WishlistSource } from '@/shared/types';
-import { DEFAULT_CHARLES_CONFIG } from '@/shared/types';
 
-// Brief #19: Charles MRF_PPC selector URL builder. Maps the user's
-// minTier + ppc selection to one of the 28 pre-built .txt files in
-// charlesxcaliber/DIMAegisWeaponWishlist. The Weapons tab radios drive
-// this; loadWishlistSources injects the computed URL onto the runtime
-// charles-aegis-tiered source so fetch.ts can treat it like any other.
-export function computeCharlesUrl(config: CharlesSourceConfig): string {
-  return (
-    'https://raw.githubusercontent.com/charlesxcaliber/DIMAegisWeaponWishlist/main/' +
-    `MrCharlesWishlist_MR${config.minTier}_PPC${config.ppc}.txt`
-  );
+// Brief #25.1: Charles URL is now static — always the most permissive
+// superset (`MRF_PPC0`, full S-F tier coverage + entries with any
+// required-perk count). The user's minTier + ppc selection became a
+// score-time filter applied by the matcher (see matcher.ts) instead of
+// a URL selector. The function signature stays so callers that inject
+// the URL on every `loadWishlistSources()` keep working; the config
+// argument is ignored.
+//
+// Pre-#25.1 behavior: each chip change picked a different `MR{tier}_PPC{ppc}`
+// file from charlesxcaliber/DIMAegisWeaponWishlist (28 variants). Switching
+// chips force-refetched a fresh 30 MB file and dumped 60 MB of parsed
+// entries into the SW heap. Rapid clicks compounded both — that's how memory
+// climbed past 8 GB. Single-fetch + score-time filter eliminates the cycle.
+const CHARLES_SUPERSET_URL =
+  'https://raw.githubusercontent.com/charlesxcaliber/DIMAegisWeaponWishlist/main/MrCharlesWishlist_MRF_PPC0.txt';
+
+export function computeCharlesUrl(_config: CharlesSourceConfig): string {
+  return CHARLES_SUPERSET_URL;
 }
 
 // Stable identifier for the Charles configurable source. Used by storage,
@@ -101,10 +108,11 @@ export const BUILTIN_WISHLIST_SOURCES: WishlistSource[] = [
   {
     id: CHARLES_SOURCE_ID,
     name: 'Aegis Tiered (Charles)',
-    // Placeholder URL — loadWishlistSources rewrites this from the user's
-    // current charlesSourceConfig before the source ever reaches fetch.ts.
-    // The built-in defaults to the most permissive variant (MRF_PPC0).
-    url: computeCharlesUrl(DEFAULT_CHARLES_CONFIG),
+    // Brief #25.1: URL is now static (MRF_PPC0 superset). The minTier+PPC
+    // chip values became score-time filters; the URL injector in
+    // loadWishlistSources still calls computeCharlesUrl() but it returns
+    // the same constant regardless of config.
+    url: CHARLES_SUPERSET_URL,
     enabled: true,
     builtin: true,
     configurable: true,

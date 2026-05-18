@@ -1,63 +1,105 @@
+// Brief #23 — Destiny-native popup rewrite. Surface composition:
+//   1. Header bar      — extension icon + CRYPTARCH + connection dot + name
+//   2. Guardian strip  — emblem placeholder + active-guardian label + last sweep
+//   3. Drop feed       — RECENT DROPS section header + NotifRow stack
+//   4. Auto-lock row   — label + angular Toggle
+//   5. Footer          — BracketBtn "OPEN DASHBOARD" + Ko-fi link
+//   6. Expired banner  — visible only when auth.state === 'expired'
+//
+// All data subscriptions and storage shapes carry over from v0.6. Filter
+// chips (tier / type / exotic) were dropped per the redesign — the popup
+// is now strictly quick-glance; filtering lives on the dashboard.
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loadFeed } from '@/core/storage/drop-feed';
 import { isLoggedIn } from '@/core/bungie/auth';
-import { loadAuthState, loadPrimaryMembership, type AuthState } from '@/core/storage/tokens';
-import { getItem, onKeyChanged, setItem } from '@/adapters/storage';
+import {
+  loadActiveCharacter,
+  loadAuthState,
+  loadPrimaryMembership,
+  type ActiveCharacter,
+  type AuthState,
+  type DestinyMembership,
+} from '@/core/storage/tokens';
+import { onKeyChanged } from '@/adapters/storage';
 import { loadScoringConfig, saveScoringConfig } from '@/core/storage/scoring-config';
 import { send } from '@/shared/messaging';
-import { RolledPerkRow } from '@/settings/components/RolledPerkRow';
-import { requestPerkPool } from '@/adapters/perk-pool-messages';
 import {
-  DEFAULT_POPUP_FILTER,
-  type DropFeedEntry,
-  type PendingNavigation,
-  type PopupFilterState,
-  type TierLetter,
-} from '@/shared/types';
+  BracketBtn,
+  Btn,
+  GradeBadge,
+  SacredBg,
+  SectionHead,
+  Toggle,
+  WeaponIcon,
+} from '@/components/destiny';
 
-const TIER_FILTER_ORDER: TierLetter[] = ['S', 'A', 'B', 'C', 'D', 'F'];
-
-// Brief #12 migration: pre-#12 PopupFilterState had `grade: string[]` mixing
-// S/A/B and 'Exotic' in one array. Replaced with separate tiers + showExotic.
-// Old stored values map to: tiers default all-on (no clean grade→tier mapping),
-// showExotic = whether 'Exotic' was in the old grade array.
-function loadPopupFilter(): PopupFilterState {
-  const raw = getItem<{
-    grade?: string[];
-    type?: string[];
-    tiers?: TierLetter[];
-    showExotic?: boolean;
-  }>(POPUP_FILTER_KEY);
-  if (!raw) return DEFAULT_POPUP_FILTER;
-  // Modern shape (post-#12): tiers and showExotic both present.
-  if (Array.isArray(raw.tiers) && typeof raw.showExotic === 'boolean') {
-    return {
-      type: raw.type ?? DEFAULT_POPUP_FILTER.type,
-      tiers: raw.tiers,
-      showExotic: raw.showExotic,
-    };
-  }
-  // Legacy shape: derive what we can.
-  return {
-    type: raw.type ?? DEFAULT_POPUP_FILTER.type,
-    tiers: DEFAULT_POPUP_FILTER.tiers,
-    showExotic: Array.isArray(raw.grade) ? raw.grade.includes('Exotic') : true,
-  };
+const CLASS_NAMES: Record<number, string> = {
+  0: 'Titan',
+  1: 'Hunter',
+  2: 'Warlock',
+};
+function classLabel(classType: number | undefined): string {
+  if (classType === undefined) return 'Guardian';
+  return CLASS_NAMES[classType] ?? 'Guardian';
 }
+function bungieImageUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  return path.startsWith('http') ? path : `https://www.bungie.net${path}`;
+}
+import type { DropFeedEntry, PendingNavigation } from '@/shared/types';
 
 const MAX_ROWS = 10;
-const POPUP_FILTER_KEY = 'popupFilterState';
 const PENDING_NAV_KEY = 'pendingNavigation';
 
-export function Popup() {
+type Grade = 'god' | 'keep' | 'exotic' | 'shard';
+
+function deriveGrade(entry: DropFeedEntry): Grade | null {
+  if (entry.isExotic) return 'exotic';
+  const isArmor = entry.itemType === 'armor';
+  if (isArmor) return entry.armorMatched === true ? 'keep' : null;
+  const matched = (entry.wishlistMatches ?? []).some((m) => m.notificationOnly !== true);
+  if (!matched) return 'shard';
+  return entry.weaponTier === 'S' ? 'god' : 'keep';
+}
+
+function buildWeaponSubtitle(entry: DropFeedEntry): string {
+  const parts: string[] = [];
+  if (entry.weaponType) parts.push(entry.weaponType);
+  if (entry.weaponSlot) parts.push(entry.weaponSlot);
+  if (entry.damageType && entry.damageType !== 'None') parts.push(entry.damageType);
+  return parts.length > 0 ? parts.join(' · ') : 'Weapon';
+}
+
+function buildArmorSubtitle(entry: DropFeedEntry): string {
+  const parts: string[] = [];
+  if (entry.armorClass) parts.push(entry.armorClass);
+  if (entry.armorSet) parts.push(entry.armorSet);
+  if (entry.armorArchetype) parts.push(entry.armorArchetype);
+  if (entry.armorTertiary) parts.push(entry.armorTertiary);
+  if (entry.armorTier) parts.push(`T${entry.armorTier}`);
+  return parts.length > 0 ? parts.join(' · ') : 'Armor';
+}
+
+function formatRelative(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+export function Popup(): JSX.Element {
   const [signedIn, setSignedIn] = useState<boolean>(() => isLoggedIn());
   const [authState, setAuthState] = useState<AuthState>(() => loadAuthState());
   const [reconnectPending, setReconnectPending] = useState(false);
-  const [displayName, setDisplayName] = useState<string | null>(
-    () => loadPrimaryMembership()?.displayName ?? null,
+  const [membership, setMembership] = useState<DestinyMembership | null>(
+    () => loadPrimaryMembership(),
+  );
+  const [activeCharacter, setActiveCharacter] = useState<ActiveCharacter | null>(
+    () => loadActiveCharacter(),
   );
   const [feed, setFeed] = useState<DropFeedEntry[]>(() => loadFeed());
-  const [filter, setFilter] = useState<PopupFilterState>(() => loadPopupFilter());
   const [autoLock, setAutoLock] = useState<boolean>(
     () => loadScoringConfig().autoLockOnArmorMatch,
   );
@@ -66,17 +108,17 @@ export function Popup() {
   useEffect(() => {
     const unsubFeed = onKeyChanged<DropFeedEntry[]>('drop-feed', (v) => setFeed(v ?? []));
     const unsubTokens = onKeyChanged('auth.tokens', (v) => setSignedIn(!!v));
-    const unsubAuthState = onKeyChanged<AuthState>('auth.state', (v) => {
-      setAuthState(v ?? 'signed-out');
-    });
-    const unsubMembership = onKeyChanged<{ displayName: string } | null>(
-      'auth.primaryMembership',
-      (v) => setDisplayName(v?.displayName ?? null),
+    const unsubAuthState = onKeyChanged<AuthState>('auth.state', (v) =>
+      setAuthState(v ?? 'signed-out'),
     );
-    const unsubFilter = onKeyChanged<PopupFilterState>(POPUP_FILTER_KEY, (v) => {
-      if (v) setFilter(v);
-    });
-    // scoring-config changes — options page may flip the autolock toggle too
+    const unsubMembership = onKeyChanged<DestinyMembership | null>(
+      'auth.primaryMembership',
+      (v) => setMembership(v ?? null),
+    );
+    const unsubChar = onKeyChanged<ActiveCharacter | null>(
+      'auth.activeCharacter',
+      (v) => setActiveCharacter(v ?? null),
+    );
     const unsubScoring = onKeyChanged('scoring-config', () => {
       setAutoLock(loadScoringConfig().autoLockOnArmorMatch);
     });
@@ -86,59 +128,11 @@ export function Popup() {
       unsubTokens();
       unsubAuthState();
       unsubMembership();
-      unsubFilter();
+      unsubChar();
       unsubScoring();
       window.clearInterval(tickId);
     };
   }, []);
-
-  // Mirror DropLogPanel's idle prewarm: fire-and-forget perk-pool fetches for
-  // the latest 10 unique weapon hashes in the feed. The SW serves cached
-  // results instantly; misses populate the cache for next time. Side-effect
-  // populates the page-side perk name cache (see perk-pool-messages.ts) so
-  // popup row tooltips show real perk names instead of hash fallbacks.
-  useEffect(() => {
-    const seen = new Set<number>();
-    for (const e of feed) {
-      if (e.itemType !== 'weapon') continue;
-      if (e.itemHash === undefined) continue;
-      if (seen.has(e.itemHash)) continue;
-      seen.add(e.itemHash);
-      if (seen.size >= 10) break;
-    }
-    for (const hash of seen) {
-      void requestPerkPool(hash);
-    }
-  }, [feed]);
-
-  const persistFilter = useCallback((next: PopupFilterState) => {
-    setFilter(next);
-    setItem(POPUP_FILTER_KEY, next);
-  }, []);
-
-  const toggleTier = useCallback(
-    (tier: TierLetter) => {
-      const next = filter.tiers.includes(tier)
-        ? filter.tiers.filter((t) => t !== tier)
-        : [...filter.tiers, tier];
-      persistFilter({ ...filter, tiers: next });
-    },
-    [filter, persistFilter],
-  );
-
-  const toggleExotic = useCallback(() => {
-    persistFilter({ ...filter, showExotic: !filter.showExotic });
-  }, [filter, persistFilter]);
-
-  const toggleType = useCallback(
-    (label: string) => {
-      const next = filter.type.includes(label)
-        ? filter.type.filter((t) => t !== label)
-        : [...filter.type, label];
-      persistFilter({ ...filter, type: next });
-    },
-    [filter, persistFilter],
-  );
 
   const handleAutoLockToggle = useCallback(() => {
     const next = !autoLock;
@@ -150,106 +144,60 @@ export function Popup() {
   const openDashboard = useCallback((instanceId?: string) => {
     if (instanceId) {
       const nav: PendingNavigation = { tab: 'drops', instanceId };
-      setItem(PENDING_NAV_KEY, nav);
+      chrome.storage.local.set({ [`cryptarch:${PENDING_NAV_KEY}`]: nav });
     }
     chrome.runtime.openOptionsPage();
     window.close();
   }, []);
 
-  // Brief #22: one-click reconnect from the popup banner. Triggers the same
-  // auth-start message the dashboard's sign-in button uses; SW handles the
-  // OAuth flow. On success auth.state flips back to 'signed-in' and the
-  // banner disappears via the onKeyChanged subscription above.
   const handleReconnect = useCallback(async () => {
     setReconnectPending(true);
     await send({ type: 'auth-start' });
     setReconnectPending(false);
   }, []);
 
-  const visible = useMemo(() => {
-    return feed
-      .filter((e) => {
-        const typeLabel = e.itemType === 'weapon' ? 'Weapons' : 'Armor';
-        if (!filter.type.includes(typeLabel)) return false;
-        if (e.isExotic) return filter.showExotic;
-        // Brief #12: tier filter applies to weapons with tier metadata. Drops
-        // without a weaponTier (Voltron-only matches without Aegis quote, pre-#12
-        // entries) always pass the tier gate. Armor passes through to the
-        // armorMatched check below.
-        if (e.itemType === 'weapon') {
-          if (e.weaponTier && !filter.tiers.includes(e.weaponTier)) return false;
-          return true;
-        }
-        // Armor without explicit match status: show. Otherwise show if matched.
-        return e.armorMatched !== false;
-      })
-      .slice(0, MAX_ROWS);
-  }, [feed, filter]);
-
+  const visibleDrops = useMemo(() => feed.slice(0, MAX_ROWS), [feed]);
   const showExpiredBanner = authState === 'expired';
+  const displayName = membership?.displayName ?? 'GUARDIAN';
 
   return (
-    <div className="flex flex-col">
-      {showExpiredBanner && (
-        <ExpiredBanner pending={reconnectPending} onReconnect={handleReconnect} />
-      )}
-      <Header
-        signedIn={signedIn}
-        displayName={displayName}
-        onSignIn={() => openDashboard()}
-      />
+    <div className="d-cursor-root relative flex flex-col min-h-[600px] bg-d-bg-deep text-d-text font-outfit">
+      <SacredBg opacity={0.5} />
+      <div className="relative z-10 flex flex-col flex-1">
+        {showExpiredBanner && (
+          <ExpiredBanner pending={reconnectPending} onReconnect={handleReconnect} />
+        )}
 
-      {signedIn && (
-        <>
-          <FilterChipRow
-            filter={filter}
-            onToggleTier={toggleTier}
-            onToggleExotic={toggleExotic}
-            onToggleType={toggleType}
-          />
+        <Header signedIn={signedIn} displayName={displayName} />
 
-          <div className="flex-1 overflow-y-auto" style={{ maxHeight: 340 }}>
-            {feed.length === 0 ? (
-              <EmptyState>No drops yet. Play Destiny 2 to see drops appear here.</EmptyState>
-            ) : visible.length === 0 ? (
-              <EmptyState>No drops match filters.</EmptyState>
-            ) : (
-              <ul className="divide-y divide-bg-border">
-                {visible.map((e) => (
-                  <DropRow
-                    key={e.instanceId}
-                    entry={e}
-                    nowTick={nowTick}
-                    onClick={() => openDashboard(e.instanceId)}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
+        <GuardianStrip
+          displayName={displayName}
+          signedIn={signedIn}
+          character={activeCharacter}
+        />
 
-          <AutoLockRow on={autoLock} onToggle={handleAutoLockToggle} />
-        </>
-      )}
+        {signedIn ? (
+          <>
+            <DropFeed
+              drops={visibleDrops}
+              nowTick={nowTick}
+              onOpen={openDashboard}
+            />
+            <AutoLockRow on={autoLock} onToggle={handleAutoLockToggle} />
+          </>
+        ) : (
+          <SignedOutPrompt onSignIn={() => openDashboard()} />
+        )}
 
-      <div className="border-t border-bg-border px-3 py-2 space-y-1.5">
-        <button
-          onClick={() => openDashboard()}
-          className="w-full text-sm px-3 py-2 rounded bg-rahool-blue/20 text-rahool-blue border border-rahool-blue/40 hover:bg-rahool-blue/30"
-        >
-          Open Dashboard
-        </button>
-        <a
-          href="https://ko-fi.com/frailrain"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block text-center text-[10px] text-text-muted hover:text-rahool-blue"
-        >
-          Buy me a coffee ☕
-        </a>
+        <Footer onOpen={() => openDashboard()} />
       </div>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*                            Sub-components                           */
+/* ------------------------------------------------------------------ */
 
 function ExpiredBanner({
   pending,
@@ -257,17 +205,15 @@ function ExpiredBanner({
 }: {
   pending: boolean;
   onReconnect: () => void;
-}) {
+}): JSX.Element {
   return (
-    <div className="border-b border-amber-500/40 bg-amber-500/10 px-3 py-2 flex items-center justify-between gap-2">
-      <span className="text-xs text-amber-300">Bungie connection expired</span>
-      <button
-        onClick={onReconnect}
-        disabled={pending}
-        className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40 hover:bg-amber-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
+    <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-d-gold-line bg-d-gold-dim">
+      <span className="text-d-10 text-d-gold uppercase tracking-d-wide">
+        Bungie connection expired
+      </span>
+      <Btn variant="primary" small onClick={onReconnect} disabled={pending}>
         {pending ? 'Waiting…' : 'Reconnect →'}
-      </button>
+      </Btn>
     </div>
   );
 }
@@ -275,141 +221,148 @@ function ExpiredBanner({
 function Header({
   signedIn,
   displayName,
-  onSignIn,
 }: {
   signedIn: boolean;
-  displayName: string | null;
-  onSignIn: () => void;
-}) {
+  displayName: string;
+}): JSX.Element {
   return (
-    <div className="flex items-center justify-between border-b border-bg-border px-3 py-2">
-      <div className="flex items-center gap-2">
+    <div className="flex items-center justify-between px-4 py-3 border-b border-d-hairline">
+      <div className="flex items-center gap-2.5">
         <img
           src={chrome.runtime.getURL('icons/icon48.png')}
           alt=""
-          className="w-6 h-6 rounded"
-          aria-hidden="true"
+          className="w-5 h-5 border border-d-gold-line"
+          aria-hidden
         />
-        <span className="text-sm font-semibold">Cryptarch</span>
+        <span className="text-d-12 font-light uppercase tracking-d-headline text-d-text">
+          Cryptarch
+        </span>
       </div>
-      {signedIn ? (
-        <div className="flex items-center gap-1.5 text-xs text-text-muted" title="Signed in">
-          <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true" />
-          <span className="truncate max-w-[140px]">{displayName ?? 'Signed in'}</span>
-        </div>
-      ) : (
-        <button
-          onClick={onSignIn}
-          className="text-xs px-2 py-1 rounded bg-rahool-blue/20 text-rahool-blue border border-rahool-blue/40 hover:bg-rahool-blue/30"
-        >
-          Sign in
-        </button>
-      )}
-    </div>
-  );
-}
-
-function FilterChipRow({
-  filter,
-  onToggleTier,
-  onToggleExotic,
-  onToggleType,
-}: {
-  filter: PopupFilterState;
-  onToggleTier: (tier: TierLetter) => void;
-  onToggleExotic: () => void;
-  onToggleType: (label: string) => void;
-}) {
-  return (
-    <div className="flex items-center flex-wrap gap-1 border-b border-bg-border px-3 py-2">
-      {/* Tier group (replaces pre-#12 grade chips) */}
-      {TIER_FILTER_ORDER.map((tier) => (
-        <TierFilterChip
-          key={tier}
-          tier={tier}
-          active={filter.tiers.includes(tier)}
-          onToggle={() => onToggleTier(tier)}
+      <div className="flex items-center gap-1.5 text-d-9 uppercase tracking-d-wide text-d-text-muted">
+        <span
+          aria-hidden
+          className={`w-[6px] h-[6px] ${signedIn ? 'bg-d-keep' : 'bg-d-text-dim'}`}
         />
-      ))}
-      <ChipToggle
-        label="Exotic"
-        active={filter.showExotic}
-        onToggle={onToggleExotic}
-        activeCls="bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50"
-      />
-      <span className="mx-1 text-text-muted/40" aria-hidden="true">
-        |
-      </span>
-      <ChipToggle
-        label="Weapons"
-        active={filter.type.includes('Weapons')}
-        onToggle={() => onToggleType('Weapons')}
-        activeCls="bg-rahool-blue/20 text-rahool-blue border-rahool-blue/40"
-      />
-      <ChipToggle
-        label="Armor"
-        active={filter.type.includes('Armor')}
-        onToggle={() => onToggleType('Armor')}
-        activeCls="bg-rahool-blue/20 text-rahool-blue border-rahool-blue/40"
-      />
+        <span className="truncate max-w-[140px]">{displayName}</span>
+      </div>
     </div>
   );
 }
 
-const TIER_CHIP_COLORS: Record<TierLetter, string> = {
-  S: 'bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50',
-  A: 'bg-rahool-blue/20 text-rahool-blue border-rahool-blue/50',
-  B: 'bg-rahool-blue/10 text-rahool-blue/70 border-rahool-blue/30',
-  C: 'bg-text-muted/15 text-text-muted border-text-muted/30',
-  D: 'bg-text-muted/10 text-text-muted/60 border-text-muted/20',
-  F: 'bg-red-500/15 text-red-400/80 border-red-500/30',
-};
-
-function TierFilterChip({
-  tier,
-  active,
-  onToggle,
+function GuardianStrip({
+  displayName,
+  signedIn,
+  character,
 }: {
-  tier: TierLetter;
-  active: boolean;
-  onToggle: () => void;
-}) {
-  const cls = active ? TIER_CHIP_COLORS[tier] : 'bg-bg-primary text-text-muted border-bg-border';
+  displayName: string;
+  signedIn: boolean;
+  character: ActiveCharacter | null;
+}): JSX.Element {
+  const emblemIcon = bungieImageUrl(character?.emblemPath);
+  const emblemBg = bungieImageUrl(character?.emblemBackgroundPath);
+  // The wide emblem nameplate is rendered as an <img> anchored to the right
+  // edge with a left-fading mask, so the decorative pattern dissolves into
+  // the dark backdrop instead of hard-cutting where the image ends. Anchoring
+  // right keeps the meaningful decoration visible (its left third is mostly
+  // the in-game name overlay zone — empty for us) and lets the popup's icon
+  // + text on the left sit on flat dark space.
   return (
-    <button
-      onClick={onToggle}
-      title={`Tier ${tier}`}
-      className={`px-2 py-0.5 rounded text-xs border ${cls}`}
+    <div
+      className="relative w-full h-[64px] flex items-center px-4 border-b border-d-hairline overflow-hidden"
+      style={{ background: '#15181c' }}
     >
-      {tier}
-    </button>
+      {emblemBg && (
+        <img
+          src={emblemBg}
+          alt=""
+          aria-hidden
+          className="absolute right-0 top-0 h-full w-auto pointer-events-none select-none"
+          style={{
+            objectFit: 'cover',
+            maskImage:
+              'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.85) 55%, black 100%)',
+            WebkitMaskImage:
+              'linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.85) 55%, black 100%)',
+          }}
+        />
+      )}
+      <div className="relative flex items-center gap-3 flex-1 min-w-0 z-10">
+        <div
+          className="w-9 h-9 flex-shrink-0 border border-d-hairline overflow-hidden bg-d-bg-pressed flex items-center justify-center"
+          aria-hidden
+        >
+          {emblemIcon ? (
+            <img
+              src={emblemIcon}
+              alt=""
+              className="w-full h-full"
+              style={{ objectFit: 'cover' }}
+            />
+          ) : (
+            <span className="text-d-gold-line text-d-10">◆</span>
+          )}
+        </div>
+        <div className="flex flex-col min-w-0 flex-1">
+          <span className="text-d-9 uppercase tracking-d-wide text-white/55">
+            Active Guardian
+          </span>
+          <span className="text-d-12 font-light text-d-text truncate">
+            {signedIn ? displayName : 'Not signed in'}
+          </span>
+          {signedIn && character && (
+            <span className="text-d-9 uppercase tracking-d-wide text-d-text-sec truncate">
+              {classLabel(character.classType)}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="relative flex flex-col items-end flex-shrink-0 z-10">
+        <span className="text-d-9 uppercase tracking-d-wide text-white/55">
+          Last Sweep
+        </span>
+        <span className="text-d-11 font-medium text-d-gold">
+          {signedIn ? '—' : 'Idle'}
+        </span>
+      </div>
+    </div>
   );
 }
 
-function ChipToggle({
-  label,
-  active,
-  onToggle,
-  activeCls,
+function DropFeed({
+  drops,
+  nowTick,
+  onOpen,
 }: {
-  label: string;
-  active: boolean;
-  onToggle: () => void;
-  activeCls: string;
-}) {
+  drops: DropFeedEntry[];
+  nowTick: number;
+  onOpen: (instanceId?: string) => void;
+}): JSX.Element {
   return (
-    <button
-      onClick={onToggle}
-      className={`px-2 py-0.5 rounded text-xs border ${
-        active ? activeCls : 'bg-bg-primary text-text-muted border-bg-border'
-      }`}
-    >
-      {label}
-    </button>
+    <div className="flex flex-col flex-1 min-h-0">
+      <div className="px-4 pt-3 pb-2">
+        <SectionHead>Recent Drops</SectionHead>
+      </div>
+      <div className="flex flex-col gap-1 px-2 pb-2 overflow-y-auto d-scroll" style={{ maxHeight: 340 }}>
+        {drops.length === 0 ? (
+          <div className="text-d-11 text-d-text-muted text-center py-6 px-3">
+            No drops yet. Play Destiny 2 to see drops appear here.
+          </div>
+        ) : (
+          drops.map((entry) => (
+            <NotifRow
+              key={entry.instanceId}
+              entry={entry}
+              nowTick={nowTick}
+              onClick={() => onOpen(entry.instanceId)}
+            />
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 
-function DropRow({
+function NotifRow({
   entry,
   nowTick,
   onClick,
@@ -417,102 +370,130 @@ function DropRow({
   entry: DropFeedEntry;
   nowTick: number;
   onClick: () => void;
-}) {
+}): JSX.Element {
+  const grade = deriveGrade(entry);
   const deleted = entry.deleted === true;
+
+  // Gold is reserved for exotics; god rolls take the legendary purple tint
+  // (the gold GOD ROLL badge is signal enough).
+  const accentColor =
+    grade === 'exotic'
+      ? 'rgba(212,175,55,0.6)'
+      : grade === 'shard'
+      ? 'rgba(194,58,58,0.45)'
+      : grade === 'keep'
+      ? 'rgba(90,158,111,0.45)'
+      : grade === 'god'
+      ? 'rgba(157,113,199,0.65)'
+      : 'rgba(157,113,199,0.45)';
+
+  const rowBg = (() => {
+    if (grade === 'shard') return 'rgba(0,0,0,0.15)';
+    if (grade === 'god')
+      return 'linear-gradient(90deg, rgba(82,47,101,0.18) 0%, transparent 50%)';
+    if (grade === 'exotic')
+      return 'linear-gradient(90deg, rgba(212,175,55,0.05) 0%, transparent 40%)';
+    return 'transparent';
+  })();
+
+  const nameColor = entry.isExotic
+    ? 'text-d-exotic'
+    : entry.itemType === 'weapon'
+    ? 'text-d-legendary'
+    : 'text-d-text';
+
+  const subtitle =
+    entry.itemType === 'weapon' ? buildWeaponSubtitle(entry) : buildArmorSubtitle(entry);
+
   return (
-    <li>
-      <button
-        onClick={onClick}
-        className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-border/40 text-left ${
-          deleted ? 'opacity-60' : ''
-        }`}
-      >
-        <Chip entry={entry} />
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative flex items-center gap-2.5 px-3 py-2 text-left hover:bg-d-bg-hover transition-colors duration-d-fast ${
+        deleted ? 'opacity-50' : ''
+      }`}
+      style={{
+        borderLeft: `3px solid ${accentColor}`,
+        background: rowBg,
+        textShadow: grade === 'god' ? '0 0 8px rgba(157,113,199,0.3)' : 'none',
+      }}
+    >
+      <WeaponIcon
+        iconUrl={entry.itemIcon}
+        size={36}
+        isExotic={entry.isExotic}
+        isGodRoll={grade === 'god'}
+        itemType={entry.itemType}
+      />
+      <div className="flex flex-col min-w-0 flex-1 gap-0.5">
         <span
-          className={`flex-1 min-w-0 text-xs truncate ${
-            entry.isExotic ? 'text-grade-exotic' : 'text-text-primary'
+          className={`text-d-11 font-medium uppercase tracking-d-wide truncate ${nameColor} ${
+            grade === 'shard' ? 'opacity-50' : ''
           } ${deleted ? 'line-through' : ''}`}
         >
           {entry.itemName}
-          {!deleted && entry.itemType === 'armor' && entry.armorMatched === true && (
-            <span className="text-emerald-400 ml-1" aria-label="matched">
-              ✓
-            </span>
-          )}
-          {!deleted && entry.locked && (
-            <span className="ml-1" aria-label="locked">
-              🔒
-            </span>
-          )}
         </span>
-        {/* Brief #21 follow-up: dropped the WishlistTag chip — the gold
-            border on the rolled-perk icons + the tier chip + thumbs-up
-            indicator already convey the wishlist signal. The chip was
-            redundant and crowded the popup row. */}
-        {!deleted && <RolledPerkRow entry={entry} iconSize={22} />}
-        <span className="text-[10px] text-text-muted whitespace-nowrap">
-          {deleted ? 'Dismantled' : formatRelative(nowTick - entry.timestamp)}
+        <span className="text-d-9 text-d-text-muted uppercase tracking-d-wide truncate">
+          {subtitle ?? (deleted ? 'Dismantled' : 'Item')}
         </span>
-      </button>
-    </li>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {grade && <GradeBadge grade={grade} small />}
+        <span className="text-d-9 text-d-text-muted uppercase tracking-d-wide whitespace-nowrap w-12 text-right">
+          {deleted ? '—' : formatRelative(nowTick - entry.timestamp)}
+        </span>
+      </div>
+    </button>
   );
 }
 
-function Chip({ entry }: { entry: DropFeedEntry }) {
-  // Brief #12 follow-up: grade chip removed in favor of tier chip; popup
-  // mirrors the Drop Log treatment (one chip per row, tier-colored, blank
-  // when the drop has no tier metadata).
-  if (entry.isExotic) {
-    return (
-      <span className="inline-flex items-center justify-center w-7 h-5 rounded text-[10px] font-semibold border bg-grade-exotic/20 text-grade-exotic border-grade-exotic/50">
-        Ex
-      </span>
-    );
-  }
-  if (entry.weaponTier) {
-    const cls = TIER_CHIP_COLORS[entry.weaponTier];
-    return (
-      <span
-        title={`Tier ${entry.weaponTier}`}
-        className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-semibold border ${cls}`}
-      >
-        {entry.weaponTier}
-      </span>
-    );
-  }
-  return <span className="inline-flex w-5 h-5" aria-hidden="true" />;
-}
-
-function AutoLockRow({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+function AutoLockRow({
+  on,
+  onToggle,
+}: {
+  on: boolean;
+  onToggle: () => void;
+}): JSX.Element {
   return (
-    <div className="flex items-center justify-between border-t border-bg-border px-3 py-2">
-      <span className="text-xs text-text-primary">Auto-lock matches</span>
-      <button
-        role="switch"
-        aria-checked={on}
-        onClick={onToggle}
-        className={`relative w-9 h-5 rounded-full transition-colors ${
-          on ? 'bg-rahool-blue' : 'bg-bg-border'
-        }`}
-      >
-        <span
-          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-            on ? 'left-[18px]' : 'left-0.5'
-          }`}
-        />
-      </button>
+    <div className="flex items-center justify-between px-4 py-2.5 border-t border-d-hairline">
+      <span className="text-d-9 uppercase tracking-d-wide text-d-text-sec">
+        Auto-Lock Matches
+      </span>
+      <Toggle on={on} onToggle={onToggle} ariaLabel="Auto-lock matches" />
     </div>
   );
 }
 
-function EmptyState({ children }: { children: React.ReactNode }) {
-  return <div className="text-xs text-text-muted text-center py-6 px-3">{children}</div>;
+function SignedOutPrompt({ onSignIn }: { onSignIn: () => void }): JSX.Element {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 gap-3 text-center">
+      <div className="text-d-11 text-d-text-muted uppercase tracking-d-wide">
+        Not signed in
+      </div>
+      <p className="text-d-11 text-d-text-sec leading-relaxed">
+        Sign in with Bungie.net from the dashboard to start tracking drops.
+      </p>
+      <Btn variant="primary" onClick={onSignIn}>
+        Open Dashboard →
+      </Btn>
+    </div>
+  );
 }
 
-function formatRelative(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
+function Footer({ onOpen }: { onOpen: () => void }): JSX.Element {
+  return (
+    <div className="px-4 pt-2.5 pb-3.5 border-t border-d-hairline flex flex-col gap-1.5">
+      <BracketBtn fullWidth onClick={onOpen}>
+        Open Dashboard
+      </BracketBtn>
+      <a
+        href="https://ko-fi.com/frailrain"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block text-center text-d-9 uppercase tracking-d-wide text-d-text-dim hover:text-d-gold-pale transition-colors duration-d-fast"
+      >
+        Buy me a coffee ☕
+      </a>
+    </div>
+  );
 }

@@ -189,6 +189,11 @@ export interface DropFeedEntry {
   // alternative.
   unlockedPerksBySocketIndex?: Record<number, number[]>;
   weaponType: string | null;
+  // Display-only metadata captured at drop time for the row subtitle:
+  // "Hand Cannon · Energy · Solar". Both optional — legacy entries lack them
+  // and the subtitle builder falls back to weaponType alone.
+  damageType?: string | null;
+  weaponSlot?: 'Kinetic' | 'Energy' | 'Heavy' | null;
   armorMatched: boolean | null;
   armorClass: 'Titan' | 'Hunter' | 'Warlock' | null;
   armorSet: string | null;
@@ -268,9 +273,10 @@ export const DEFAULT_POPUP_FILTER: PopupFilterState = {
 // mount to select the right tab and scroll to / briefly highlight that row.
 // The Dashboard clears this key after consuming it.
 export interface PendingNavigation {
-  // Brief #12 renamed: 'rules' → 'armor', 'wishlists' → 'weapons'. Stale stored
-  // values from before the rename are migrated at consume time in Settings.tsx.
-  tab: 'drops' | 'armor' | 'weapons';
+  // Brief #12 renamed: 'rules' → 'armor', 'wishlists' → 'weapons'.
+  // Brief #23 renamed: 'weapons' → 'settings'. Stale stored values from
+  // either rename are migrated at consume time in Settings.tsx.
+  tab: 'drops' | 'armor' | 'settings';
   instanceId?: string;
 }
 

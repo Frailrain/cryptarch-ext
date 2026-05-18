@@ -69,10 +69,11 @@ export function WishlistTestPanel() {
   const [armorState, setArmorState] = useState<RunState>('idle');
   const [result, setResult] = useState<ResultState>({ kind: 'none' });
 
-  const runMultiSource = useCallback(async () => {
+  const runMultiSource = useCallback(async (tier?: TierLetter) => {
     setMultiState('running');
     const response = await send<{ ok: boolean; payload?: MultiSourcePayload; error?: string }>({
       type: 'wishlist-test-multi-source',
+      payload: tier ? { tier } : undefined,
     });
     setMultiState('idle');
     if (!response?.ok || !response.payload) {
@@ -81,6 +82,9 @@ export function WishlistTestPanel() {
     }
     setResult({ kind: 'multi', data: response.payload });
   }, []);
+
+  const anyRunning =
+    multiState === 'running' || fallbackState === 'running' || armorState === 'running';
 
   const runFallback = useCallback(async () => {
     setFallbackState('running');
@@ -110,44 +114,51 @@ export function WishlistTestPanel() {
 
   return (
     <div className="rounded-lg border border-bg-border bg-bg-card p-4 space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-medium">Wishlist matcher test</div>
-          <div className="text-xs text-text-muted">
-            Synthesizes a drop, runs it through the live matcher, and appends it to the drop log
-            below (prefixed with [Test]). Results reflect your current enabled-source
-            configuration.
-          </div>
+      <div>
+        <div className="text-sm font-medium">Wishlist matcher test</div>
+        <div className="text-xs text-text-muted">
+          Synthesizes a drop, runs it through the live matcher, and appends it to the drop log
+          below (prefixed with [Test]). Tier-specific buttons skip the inventory-first lookup —
+          useful when your live inventory is all one tier.
         </div>
-        <div className="flex gap-2 shrink-0 flex-wrap">
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-text-muted">Multi-source:</span>
+        <button
+          onClick={() => void runMultiSource()}
+          disabled={anyRunning}
+          className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {multiState === 'running' ? 'Testing…' : 'Random'}
+        </button>
+        {(['S', 'A', 'B', 'C', 'D', 'F'] as const).map((t) => (
           <button
-            onClick={() => void runMultiSource()}
-            disabled={
-              multiState === 'running' || fallbackState === 'running' || armorState === 'running'
-            }
-            className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            key={t}
+            onClick={() => void runMultiSource(t)}
+            disabled={anyRunning}
+            title={`Force a synthesized ${t}-tier test drop`}
+            className="text-xs w-8 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {multiState === 'running' ? 'Testing…' : 'Run multi-source test'}
+            {t}
           </button>
-          <button
-            onClick={() => void runFallback()}
-            disabled={
-              multiState === 'running' || fallbackState === 'running' || armorState === 'running'
-            }
-            className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {fallbackState === 'running' ? 'Testing…' : 'Run fallback test'}
-          </button>
-          <button
-            onClick={() => void runArmor()}
-            disabled={
-              multiState === 'running' || fallbackState === 'running' || armorState === 'running'
-            }
-            className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {armorState === 'running' ? 'Fetching inventory…' : 'Run armor test'}
-          </button>
-        </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-text-muted">Other:</span>
+        <button
+          onClick={() => void runFallback()}
+          disabled={anyRunning}
+          className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {fallbackState === 'running' ? 'Testing…' : 'Fallback'}
+        </button>
+        <button
+          onClick={() => void runArmor()}
+          disabled={anyRunning}
+          className="text-xs px-3 py-1.5 rounded border border-bg-border text-text-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {armorState === 'running' ? 'Fetching inventory…' : 'Armor'}
+        </button>
       </div>
 
       {result.kind === 'error' && (
